@@ -1,0 +1,50 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.1.1"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.1.1 http://maven.apache.org/xsd/assembly-2.1.1.xsd">
+
+    <id>release</id>
+
+    <formats>
+        <format>tar.gz</format>
+    </formats>
+
+    <includeBaseDirectory>true</includeBaseDirectory>
+
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>libs</outputDirectory>
+            <scope>runtime</scope>
+            <useProjectArtifact>false</useProjectArtifact>
+        </dependencySet>
+    </dependencySets>
+
+    <fileSets>
+        <fileSet>
+            <directory>${project.build.directory}</directory>
+            <outputDirectory>libs/etl</outputDirectory>
+            <includes>
+                <include>*.jar</include>
+            </includes>
+            <excludes>
+                <exclude>*-original.jar</exclude> <exclude>*-sources.jar</exclude>
+                <exclude>*-javadoc.jar</exclude>
+            </excludes>
+        </fileSet>
+
+        <fileSet>
+            <directory>src/main/resources</directory>
+            <outputDirectory>config</outputDirectory>
+            <includes>
+                <include>application.yml</include>
+                <include>application-*.yml</include>
+                <include>logback-spring.xml</include>
+            </includes>
+        </fileSet>
+
+        <fileSet>
+            <directory>src/main/scripts</directory> <outputDirectory>shell</outputDirectory>
+            <fileMode>0755</fileMode>
+            <lineEnding>unix</lineEnding>
+        </fileSet>
+    </fileSets>
+</assembly>

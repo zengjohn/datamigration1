@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Qianyi Migration Console</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; background: #f0f2f5; }
+        .header { background: #fff; padding: 0 20px; height: 60px; display: flex; align-items: center; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+        .header h2 { margin: 0; font-size: 18px; color: #303133; }
+        .main-container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+        .nav-breadcrumb { margin-bottom: 20px; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; }
+        .status-tag { font-weight: bold; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="header">
+        <h2>🚀 数据迁移控制台 (New Architecture)</h2>
+    </div>
+
+    <div class="main-container">
+        <el-breadcrumb separator="/" class="nav-breadcrumb">
+            <el-breadcrumb-item><a @click="goHome">作业列表 (Jobs)</a></el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentBatch">批次列表 (Table: {{currentBatch.tableName}})</el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentDetail">源文件任务 (Source: {{currentDetail.sourceCsvPath}})</el-breadcrumb-item>
+        </el-breadcrumb>
+
+        <div v-if="viewState === 'JOB'">
+            <el-card>
+                <template #header><div class="card-header"><span>作业配置</span><el-button type="primary" @click="openJobDialog">新建作业</el-button></div></template>
+                <el-table :data="jobList" border stripe>
+                    <el-table-column prop="id" label="ID" width="60"></el-table-column>
+                    <el-table-column prop="jobName" label="作业名称"></el-table-column>
+                    <el-table-column prop="sourceDir" label="监控目录"></el-table-column>
+                    <el-table-column label="状态" width="100">
+                        <template #default="{row}">
+                            <el-tag :type="row.active ? 'success' : 'info'">{{ row.active ? '运行中' : '暂停' }}</el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="操作">
+                        <template #default="{row}">
+                            <el-button size="small" @click="toggleJob(row)">{{ row.active ? '暂停' : '启动' }}</el-button>
+                            <el-button size="small" type="primary" @click="enterJob(row)">查看批次</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </el-card>
+        </div>
+
+        <div v-if="viewState === 'BATCH'">
+            <el-card>
+                <template #header><div class="card-header"><span>批次列表 (Job: {{currentJob.jobName}})</span><el-button @click="goHome">返回</el-button></div></template>
+                <el-table :data="batchList" border stripe>
+                    <el-table-column prop="id" label="批次ID" width="80"></el-table-column>
+                    <el-table-column prop="tableName" label="表名"></el-table-column>
+                    <el-table-column prop="okFilePath" label="触发文件"></el-table-column>
+                    <el-table-column prop="status" label="状态">
+                        <template #default="{row}">
+                            <el-tag :type="row.status === 'FINISHED' ? 'success' : 'warning'">{{ row.status }}</el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="createTime" label="触发时间"></el-table-column>
+                    <el-table-column label="操作">
+                        <template #default="{row}">
+                            <el-button size="small" type="primary" @click="enterBatch(row)">查看明细</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </el-card>
+        </div>
+
+        <div v-if="viewState === 'DETAIL'">
+            <el-card>
+                <template #header><div class="card-header"><span>源文件任务 (Table: {{currentBatch.tableName}})</span><el-button @click="backToBatch">返回</el-button></div></template>
+                <el-table :data="detailList" border stripe>
+                    <el-table-column prop="id" label="任务ID" width="80"></el-table-column>
+                    <el-table-column prop="sourceCsvPath" label="源CSV文件" show-overflow-tooltip></el-table-column>
+                    <el-table-column label="阶段" width="120">
+                        <template #default="{row}">
+                            <el-tag effect="dark" :type="getStatusType(row.status)">{{ row.status }}</el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="errorMsg" label="错误信息" show-overflow-tooltip></el-table-column>
+                    <el-table-column label="操作" width="300">
+                        <template #default="{row}">
+                            <el-popover placement="left" :width="600" trigger="click" @show="loadSplits(row.id)">
+                                <template #reference>
+                                    <el-button size="small">查看切分 (Splits)</el-button>
+                                </template>
+                                <el-table :data="splitsMap[row.id]" size="small" border>
+                                    <el-table-column prop="splitFilePath" label="切分文件"></el-table-column>
+                                    <el-table-column prop="rowCount" label="行数" width="80"></el-table-column>
+                                    <el-table-column prop="status" label="状态" width="80">
+                                        <template #default="scope">
+                                            <span :style="{color: scope.row.status==='PASS'?'green':'red'}">{{ scope.row.status }}</span>
+                                        </template>
+                                    </el-table-column>
+                                </el-table>
+                            </el-popover>
+
+                            <el-button v-if="row.status.includes('FAIL')" size="small" type="danger" @click="retryDetail(row.id, 'TRANSCODE')">重试转码</el-button>
+                            <el-button v-if="row.status === 'WAIT_RELOAD'" size="small" type="warning" @click="retryDetail(row.id, 'LOAD')">断点续传</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </el-card>
+        </div>
+    </div>
+
+    <el-dialog v-model="showJobDialog" title="新建作业">
+        <el-form :model="jobForm">
+            <el-form-item label="名称"><el-input v-model="jobForm.jobName"></el-input></el-form-item>
+            <el-form-item label="监控目录"><el-input v-model="jobForm.sourceDir"></el-input></el-form-item>
+            <el-form-item label="JDBC URL"><el-input v-model="jobForm.targetJdbcUrl"></el-input></el-form-item>
+        </el-form>
+        <template #footer><el-button type="primary" @click="submitJob">保存</el-button></template>
+    </el-dialog>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+
+<script>
+    const { createApp, ref, onMounted } = Vue;
+    createApp({
+        setup() {
+            const viewState = ref('JOB'); // JOB, BATCH, DETAIL
+            const currentJob = ref(null);
+            const currentBatch = ref(null);
+            const currentDetail = ref(null);
+
+            const jobList = ref([]);
+            const batchList = ref([]);
+            const detailList = ref([]);
+            const splitsMap = ref({}); // 缓存 split 数据
+
+            const showJobDialog = ref(false);
+            const jobForm = ref({});
+
+            // Loaders
+            const loadJobs = async () => {
+                const res = await axios.get('/api/job/list');
+                jobList.value = res.data;
+            };
+
+            const loadBatches = async (jobId) => {
+                const res = await axios.get(`/api/batch/list?jobId=${jobId}`);
+                batchList.value = res.data;
+            };
+
+            const loadDetails = async (batchId) => {
+                const res = await axios.get(`/api/detail/list?batchId=${batchId}`);
+                detailList.value = res.data;
+            };
+
+            const loadSplits = async (detailId) => {
+                const res = await axios.get(`/api/split/list?detailId=${detailId}`);
+                splitsMap.value[detailId] = res.data;
+            };
+
+            // Actions
+            const enterJob = (job) => {
+                currentJob.value = job;
+                viewState.value = 'BATCH';
+                loadBatches(job.id);
+            };
+
+            const enterBatch = (batch) => {
+                currentBatch.value = batch;
+                viewState.value = 'DETAIL';
+                loadDetails(batch.id);
+            };
+
+            const goHome = () => { viewState.value = 'JOB'; currentJob.value = null; loadJobs(); };
+            const backToBatch = () => { viewState.value = 'BATCH'; currentBatch.value = null; };
+
+            const toggleJob = async (row) => {
+                await axios.post(`/api/job/toggle/${row.id}`);
+                loadJobs();
+            };
+
+            const submitJob = async () => {
+                jobForm.value.active = true;
+                await axios.post('/api/job/save', jobForm.value);
+                showJobDialog.value = false;
+                loadJobs();
+            };
+
+            const retryDetail = async (id, type) => {
+                await axios.post(`/api/detail/retry/${id}?type=${type}`);
+                ElementPlus.ElMessage.success('指令已发送');
+                loadDetails(currentBatch.value.id);
+            };
+
+            const getStatusType = (status) => {
+                if (status === 'PASS' || status === 'FINISHED') return 'success';
+                if (status === 'NEW') return 'info';
+                if (status.includes('FAIL')) return 'danger';
+                return 'primary'; // PROCESSING, LOADING...
+            };
+
+            // Auto Refresh simple logic
+            setInterval(() => {
+                if (viewState.value === 'DETAIL' && currentBatch.value) {
+                    loadDetails(currentBatch.value.id);
+                } else if (viewState.value === 'BATCH' && currentJob.value) {
+                    loadBatches(currentJob.value.id);
+                }
+            }, 3000);
+
+            onMounted(() => loadJobs());
+
+            return {
+                viewState, jobList, batchList, detailList, splitsMap,
+                currentJob, currentBatch, currentDetail,
+                showJobDialog, jobForm,
+                enterJob, enterBatch, goHome, backToBatch,
+                toggleJob, openJobDialog: () => showJobDialog.value = true, submitJob,
+                loadSplits, retryDetail, getStatusType
+            };
+        }
+    }).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+.classpath
+.project
+.settings/
+.idea/
+target/
+/log/
+dbdump/
+/rule/
+*.iml
+config/tableDumpTaskInfos.json
+config/dumptask
+dumptask
+objectinfo
+*/metaexample.rar
+dumperut/log/

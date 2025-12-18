@@ -1,0 +1,56 @@
+server:
+  port: 8080 # 提供 HTTP 查询接口的端口
+
+spring:
+  application:
+    name: moveprog
+
+  # 数据库配置 (存放 qianyi_main, qianyi_detail 的元数据库)
+  datasource:
+    url: jdbc:mysql://localtestdb:3306/test1?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 111111
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  # JPA 配置
+  jpa:
+    hibernate:
+      ddl-auto: update # 第一次运行时会自动建表，生产环境建议改为 validate
+    show-sql: false
+    open-in-view: false
+
+  # 线程池配置 (如果你启用了上面的虚拟线程 Bean，这里就不太重要了，但保留也没事)
+  task:
+    execution:
+      pool:
+        core-size: 10
+        max-size: 50
+
+# 自定义应用配置
+app:
+  # 1. 源端 CSV 配置 (IBM 大机文件)
+  source:
+    encoding: UTF-8        # 核心编码
+    delimiter: ','            # 列分隔符
+    line-separator: "\n"      # 行结束符 (注意双引号，防止被yaml转义)
+    quote: '"'                # 引用符
+    escape: '"'               # 转义符
+
+  # 2. 输出 CSV 配置 (Target TDSQL/MySQL Load Data)
+  output:
+    encoding: UTF-8
+    delimiter: '|'            # 通常数据库导入喜欢用 | 分隔
+    quote: '"'
+    line-separator: "\n"
+
+  # 3. 性能参数调优
+  performance:
+    read-buffer-size: 16777216  # 16MB (读取大文件建议加大)
+    write-buffer-size: 2097152  # 2MB
+    split-rows: 500000          # 多少行切分一个文件
+    max-chars-per-column: 100000 # 防止某些超长备注导致OOM
+
+  # 路径配置 (保留之前的)
+  job:
+    output-dir: /data/moveprog/output_split/
+    error-dir: /data/moveprog/output_error/
