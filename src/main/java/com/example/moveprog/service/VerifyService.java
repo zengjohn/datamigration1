@@ -1,136 +1,178 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
+import com.example.moveprog.enums.VerifyStrategy;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.scheduler.TaskLockManager;
+import com.example.moveprog.service.impl.CsvRowIterator;
+import com.example.moveprog.service.impl.JdbcRowIterator;
+import com.google.gson.Gson;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowCallbackHandler;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.io.BufferedReader;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class VerifyService {
 
+    private final MigrationJobRepository jobRepo;
+    private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
-    private final QianyiRepository qianyiRepo;
 
     private final TaskLockManager lockManager;
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CoreComparator coreComparator; // 注入上一轮写的比对器
+    // 注入刚才配置的专用线程池
+    @Qualifier("verifyExecutor")
+    private final Executor verifyExecutor;
 
-    @Async
+    // 注入 AppProperties 用于获取配置...
+    private final AppProperties config;
+
+    /**
+     * 执行比对的主入口
+     * @param detailId 明细ID
+     */
+    @Async("taskExecutor") // 外层异步，避免阻塞 Controller
     public void execute(Long detailId) {
+        // 1. 尝试加锁
+        if (!lockManager.tryLock(detailId)) {
+            log.warn("任务正在运行中，跳过: {}", detailId);
+            return;
+        }
+
+        VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
+
         QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
         if (detail == null) { lockManager.releaseLock(detailId); return; }
 
         try {
-            log.info("开始校验任务: {}", detailId);
+            log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
+
+            // 2. 准备基础数据
             Qianyi batch = qianyiRepo.findById(detail.getQianyiId()).orElseThrow();
-            String tableName = batch.getTableName();
+            MigrationJob job = jobRepo.findById(batch.getJobId()).orElseThrow();
 
-            // 获取该任务下所有 PASS 的切分文件
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatusNot(detailId, CsvSplitStatus.FAIL);
+            // 3. 获取待比对的分片 (通常比对那些非 PASS 的，或者是全部重新比对，看业务需求)
+            // 这里假设比对所有未通过的，或者 Failed 的允许重试
+            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
 
-            for (CsvSplit split : splits) {
-                // 如果想要严格比对，必须确保文件是 PASS 的
-                if (split.getStatus() != CsvSplitStatus.PASS) {
-                    throw new RuntimeException("存在未成功的切分文件，无法校验");
-                }
-
-                // 执行流式比对
-                verifySingleSplitStream(split, tableName);
+            if (splits.isEmpty()) {
+                log.info("没有需要比对的分片");
+                markDetailSuccess(detail);
+                return;
             }
 
-            // 全部通过
-            detail.setStatus(DetailStatus.PASS);
-            detail.setErrorMsg(null);
-            detailRepo.save(detail);
+            // 4. 并发执行 (Fan-out)
+            List<CompletableFuture<Void>> futures = splits.stream()
+                    .map(split -> CompletableFuture.runAsync(() -> {
+                        // 每个分片单独执行比对
+                        doVerifySingleSplit(split, batch.getTableName(), job, strategy);
+                    }, verifyExecutor)) // <--- 使用专用线程池
+                    .collect(Collectors.toList());
+
+            // 5. 等待所有任务完成 (Join)
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            // 6. 汇总结果 (Fan-in)
+            // 再次查询数据库，看是否还有非 PASS 的状态
+            long failCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
+
+            if (failCount == 0) {
+                markDetailSuccess(detail);
+            } else {
+                detail.setStatus(DetailStatus.WAIT_VERIFY); // 或 PARTIAL_FAIL
+                detail.setErrorMsg(failCount + " 个分片比对失败，请查看子任务详情");
+                detailRepo.save(detail);
+            }
 
         } catch (Exception e) {
-            log.error("校验失败", e);
-            detail.setStatus(DetailStatus.WAIT_VERIFY); // 保持在待校验
-            detail.setErrorMsg("校验不通过: " + e.getMessage());
+            log.error("比对主流程异常", e);
+            detail.setStatus(DetailStatus.WAIT_VERIFY);
+            detail.setErrorMsg("系统异常: " + e.getMessage());
             detailRepo.save(detail);
         } finally {
             lockManager.releaseLock(detailId);
         }
     }
 
+    private void markDetailSuccess(QianyiDetail detail) {
+        detail.setStatus(DetailStatus.PASS);
+        detail.setErrorMsg("校验通过");
+        detail.setUpdateTime(LocalDateTime.now());
+        detailRepo.save(detail);
+        log.info("DetailId={} 校验全部通过", detail.getId());
+    }
+
     /**
-     * 流式比对：一边读 CSV，一边读数据库游标，逐行比对内容
-     * 利用了索引 (csvid, source_row_no) 避免数据库排序
+     * 单个分片的具体执行逻辑
+     * 捕获所有异常，确保不中断主线程的 join
      */
-    private void verifySingleSplitStream(CsvSplit split, String tableName) throws Exception {
-        log.info("正在比对文件: {}", split.getSplitFilePath());
+    private void doVerifySingleSplit(CsvSplit split, String tableName, MigrationJob job, VerifyStrategy strategy) {
+        try {
+            // 设置状态为处理中 (可选，便于UI展示进度)
+            // split.setStatus(CsvSplitStatus.VERIFYING); splitRepo.save(split);
 
-        // 1. 构造 SQL，强制按 source_row_no 排序
-        // 这一步非常快，因为有联合索引
-        String sql = String.format(
-            "SELECT user_id, user_name, balance FROM %s WHERE csvid = ? ORDER BY source_row_no", 
-            tableName
-        );
+            String dbUrl = job.getTargetJdbcUrl();
+            String user = job.getTargetUser();
+            String pwd = job.getTargetPassword();
 
-        // 2. 读取 CSV 文件流
-        try (BufferedReader br = Files.newBufferedReader(Paths.get(split.getSplitFilePath()))) {
-            
-            // 3. 使用 RowCallbackHandler 进行流式处理 (不会一次性把数据加载到内存)
-            jdbcTemplate.query(sql, new Object[]{split.getId()}, new RowCallbackHandler() {
-                
-                // 闭包变量：记录当前 CSV 读到了哪一行
-                long dbRowCount = 0;
-                boolean verifyFailed = false;
+            // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
+            String sql = "SELECT * FROM " + tableName + " WHERE csvid = ? ORDER BY source_row_no";
 
-                @Override
-                public void processRow(ResultSet rs) throws SQLException {
-                    if (verifyFailed) return; // 已经失败就不比了
+            // 使用 try-with-resources 自动关闭两个迭代器
+            try (
+                    // 1. 构建 DB 迭代器
+                    CloseableRowIterator dbIter = new JdbcRowIterator(dbUrl, user, pwd, sql, split.getId());
 
-                    try {
-                        String csvLine = br.readLine();
-                        if (csvLine == null) {
-                            throw new RuntimeException("数据库行数多于CSV文件行数");
-                        }
-                        
-                        // 解析 CSV 行 (注意：切分文件里最后一列是行号，前面是数据)
-                        // 假设 CSV: U001,Alice,100.00,1
-                        String[] csvParts = csvLine.split(","); // 简单分割，实际建议用 CSVParser
-                        
-                        // 获取数据库值
-                        String dbUserId = rs.getString("user_id");
-                        String dbUserName = rs.getString("user_name");
-                        // 比较...
-                        
-                        // 简单核对：比如只核对 ID，或者核对拼接的字符串 hash
-                        if (!dbUserId.equals(csvParts[0])) {
-                             throw new RuntimeException("内容不一致! Row=" + (dbRowCount+1) + 
-                                     " DB=" + dbUserId + " CSV=" + csvParts[0]);
-                        }
-                        
-                        dbRowCount++;
-                    } catch (Exception e) {
-                        verifyFailed = true;
-                        throw new SQLException(e); // 抛出异常中断 query
-                    }
-                }
-            });
-            
-            // 4. 确认 CSV 是否也读完了
-            if (br.readLine() != null) {
-                throw new RuntimeException("CSV文件行数多于数据库行数");
+                    // 2. 构建 文件 迭代器 (工厂方法见上一轮回答)
+                    CloseableRowIterator fileIter = createFileIterator(split, strategy)
+            ) {
+                // 3. 核心比对
+                coreComparator.compareStreams(dbIter, fileIter);
             }
+
+            // 成功
+            split.setStatus(CsvSplitStatus.PASS);
+            split.setErrorMsg(null);
+            splitRepo.save(split);
+
+        } catch (Exception e) {
+            log.error("分片比对失败: SplitId={}", split.getId(), e);
+            split.setStatus(CsvSplitStatus.FAIL);
+            // 截取部分错误信息防止数据库字段溢出
+            String msg = e.getMessage();
+            split.setErrorMsg(msg != null && msg.length() > 500 ? msg.substring(0, 500) : msg);
+            splitRepo.save(split);
+            // 注意：这里吞掉异常，不要抛出，否则 CompletableFuture.join 会报错中断其他任务
         }
     }
+
+    // 工厂方法：根据策略创建不同的文件迭代器
+    private CloseableRowIterator createFileIterator(CsvSplit split, VerifyStrategy strategy) throws Exception {
+        if (strategy == VerifyStrategy.USE_SOURCE_FILE) {
+            // 策略 B: 读源文件 IBM1388 + Skip
+            // 假设 detail 里能取到 sourceFilePath
+            QianyiDetail detailById = detailRepo.findById(split.getDetailId()).orElse(null);
+            String sourcePath = detailById.getSourceCsvPath();
+            return new CsvRowIterator(sourcePath, "IBM1388", split.getStartRowNo() - 1, split.getRowCount());
+        } else {
+            // 策略 A: 读切分文件 UTF-8
+            return new CsvRowIterator(split.getSplitFilePath(), "UTF-8", 0, null);
+        }
+    }
+
 }

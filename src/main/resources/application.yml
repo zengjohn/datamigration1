@@ -54,3 +54,13 @@ app:
   job:
     output-dir: /data/moveprog/output_split/
     error-dir: /data/moveprog/output_error/
+
+logging:
+  level:
+    org:
+      hibernate:
+        SQL: INFO
+        type:
+          descriptor:
+            sql:
+              BasicBinder: INFO

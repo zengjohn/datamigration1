@@ -221,9 +221,15 @@ public class TranscodeService {
                         writer = null;
                         fileIndex++;
                         // 保存切分记录到数据库
-                        saveSplit(detailId, currentOutPath, currentFileRows);
+                        saveSplit(detailId, currentOutPath, lineNo-1, currentFileRows);
                         currentFileRows = 0;
                     }
+                }
+
+                if (currentFileRows > 0) {
+                    writer.close();
+                    // 保存切分记录到数据库
+                    saveSplit(detailId, currentOutPath, lineNo-1, currentFileRows);
                 }
             } finally {
                 if (writer != null) writer.close();
@@ -404,10 +410,11 @@ public class TranscodeService {
         }
     }
 
-    private void saveSplit(Long detailId, Path path, Long rowCount) {
+    private void saveSplit(Long detailId, Path path, Long startLineNo, Long rowCount) {
         CsvSplit split = new CsvSplit();
         split.setDetailId(detailId);
         split.setSplitFilePath(path.toString());
+        split.setStartRowNo(startLineNo);
         split.setRowCount(rowCount);
         split.setStatus(CsvSplitStatus.WL); // Wait Load
         splitRepo.save(split);

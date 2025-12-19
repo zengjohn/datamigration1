@@ -14,6 +14,7 @@ public class AppProperties {
     private Csv output = new Csv();
     private Performance performance = new Performance();
     private Job job = new Job();
+    private Verify verify = new Verify();
 
     @Data
     public static class Csv {
@@ -42,6 +43,11 @@ public class AppProperties {
     public static class Job {
         private String outputDir;
         private String errorDir;
+    }
+
+    @Data
+    public static class Verify {
+        private String strategy = "USE_SOURCE_FILE";
     }
 
 }

@@ -113,7 +113,9 @@
         <el-form :model="jobForm">
             <el-form-item label="名称"><el-input v-model="jobForm.jobName"></el-input></el-form-item>
             <el-form-item label="监控目录"><el-input v-model="jobForm.sourceDir"></el-input></el-form-item>
-            <el-form-item label="JDBC URL"><el-input v-model="jobForm.targetJdbcUrl"></el-input></el-form-item>
+            <el-form-item label="目标数据库 URL"><el-input v-model="jobForm.targetJdbcUrl"></el-input></el-form-item>
+            <el-form-item label="数据库用户名"><el-input v-model="jobForm.targetUser" placeholder="root"></el-input></el-form-item>
+            <el-form-item label="数据库密码"><el-input v-model="jobForm.targetPassword" placeholder="password"></el-input></el-form-item>
         </el-form>
         <template #footer><el-button type="primary" @click="submitJob">保存</el-button></template>
     </el-dialog>

@@ -47,4 +47,23 @@ public class ThreadPoolConfig {
         return executor;
     }
 
+    /**
+     * 比对专用线程池
+     * 特点：IO 密集型（大量读库），但也消耗 CPU（大量字符串比对）
+     * 建议核心线程数不要超过 DB 连接池大小的 1/2
+     */
+    @Bean("verifyExecutor")
+    public Executor verifyExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        // 核心线程数：建议 5 ~ 10，太高会把数据库连接池打满
+        executor.setCorePoolSize(5);
+        executor.setMaxPoolSize(10);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("verify-exec-");
+        // 拒绝策略：调用者运行（防止任务丢失，起到削峰作用）
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
+
 }

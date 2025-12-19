@@ -8,7 +8,6 @@ import com.example.moveprog.scheduler.TaskLockManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,6 +17,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -34,8 +37,6 @@ public class LoadService {
     private final QianyiRepository qianyiRepo;
     private final MigrationJobRepository jobRepo;
     private final TaskLockManager lockManager;
-
-    private final JdbcTemplate jdbcTemplate;
 
     // 必须与 ThreadPoolConfig 中的方法名一致，或者使用 @Qualifier("dbLoadExecutor")
     @Qualifier("dbLoadExecutor")
@@ -57,8 +58,6 @@ public class LoadService {
             // 1. 获取上下文信息
             Qianyi batch = qianyiRepo.findById(detail.getQianyiId())
                     .orElseThrow(() -> new RuntimeException("批次不存在"));
-            MigrationJob job = jobRepo.findById(batch.getJobId())
-                    .orElseThrow(() -> new RuntimeException("作业配置不存在"));
 
             // 2. 解析 DDL 获取列名列表 (用于构造 LOAD DATA 语句)
             // 假设 DDL 文件路径存在 batch.getDdlFilePath() 中
@@ -75,11 +74,19 @@ public class LoadService {
 
             log.info("任务[{}] 开始并发装载 {} 个文件, 表: {}", detailId, splits.size(), batch.getTableName());
 
+            MigrationJob job = jobRepo.findById(batch.getJobId())
+                    .orElseThrow(() -> new RuntimeException("作业配置不存在"));
+            // 准备数据库连接信息
+            String url = job.getTargetJdbcUrl();
+            String user = job.getTargetUser();
+            String password = job.getTargetPassword();
+
             // 4. 并发装载
             List<CompletableFuture<Void>> futures = splits.stream()
                     .map(split -> CompletableFuture.runAsync(() -> {
                         // 调用原子装载方法
-                        loadSingleSplitFile(split, batch.getTableName(), columnNames);
+                        // 传入连接信息，而不是用注入的 template
+                        loadSingleSplitFile(batch.getTableName(), split, columnNames, url, user, password);
                     }, dbLoadExecutor))
                     .collect(Collectors.toList());
 
@@ -110,31 +117,44 @@ public class LoadService {
      * 单个切分文件装载 (原子操作：删 + 插)
      */
     @Transactional(rollbackFor = Exception.class)
-    public void loadSingleSplitFile(CsvSplit split, String tableName, List<String> columnNames) {
+    public void loadSingleSplitFile(String tableName, CsvSplit split, List<String> columnNames, String url, String user, String pwd) {
         log.info("开始装载切分文件: ID={}", split.getId());
 
-        try {
+        try (Connection conn = DriverManager.getConnection(url, user, pwd)) {
+            // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)
+            // 注意：LOAD DATA LOCAL INFILE 需要特殊的驱动设置
             // Step 1: 幂等删除 (根据 csvid 清理旧数据)
-            String deleteSql = String.format("DELETE FROM %s WHERE csvid = ?", tableName);
-            jdbcTemplate.update(deleteSql, split.getId());
+            String deleteSql = String.format("DELETE FROM %s WHERE csvid=" + split.getId(), tableName);
+            executeUpdateSql(conn, deleteSql);
 
             // Step 2: 构造 LOAD DATA SQL
-            String loadSql = generateLoadSql(tableName, split.getSplitFilePath(), split.getId(), columnNames);
-            
+            String loadSql = generateLoadSql(tableName, split, columnNames);
+
             // 执行装载
-            jdbcTemplate.execute(loadSql);
+            // 注意：如果是 MySQL，必须在 URL 加上 allowLoadLocalInfile=true
+            // 且这里的 loadSql 可能需要转为 InputStream 方式发送，或者直接 execute
+            // 简单方式：
+            executeUpdateSql(conn, loadSql);
 
             // Step 3: 标记成功
             split.setStatus(CsvSplitStatus.PASS);
             split.setErrorMsg(null);
             splitRepo.save(split);
-
         } catch (Exception e) {
             log.error("切分文件装载失败: Path={}", split.getSplitFilePath(), e);
             split.setStatus(CsvSplitStatus.FAIL);
             split.setErrorMsg(e.getMessage());
             splitRepo.save(split);
             throw new RuntimeException(e); // 抛出异常以便 CompletableFuture 感知
+        }
+    }
+
+    private void executeUpdateSql(Connection conn, String sql) throws SQLException {
+        try(Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(sql);
+        } catch (SQLException e) {
+            log.error("failed to execute {}", sql);
+            throw e;
         }
     }
 
@@ -164,9 +184,14 @@ public class LoadService {
 
     /**
      * 动态生成 LOAD DATA SQL
+     * @param tableName 目标表名
+     * @param csvSplit
      */
-    private String generateLoadSql(String tableName, String csvPath, Long splitId, List<String> columns) {
-        String safePath = csvPath.replace("\\", "/");
+    private String generateLoadSql(String tableName, CsvSplit csvSplit, List<String> columns) {
+        String splitCsvPath = csvSplit.getSplitFilePath();
+        Long splitId = csvSplit.getId();
+
+        String safePath = splitCsvPath.replace("\\", "/");
 
         StringBuilder sb = new StringBuilder();
         sb.append("LOAD DATA LOCAL INFILE '").append(safePath).append("' ");
