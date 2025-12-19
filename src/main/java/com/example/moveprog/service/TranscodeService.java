@@ -46,10 +46,12 @@ public class TranscodeService {
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
+
     private final TaskLockManager lockManager;
     
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
+
     private final Gson gson = new Gson();
 
     @Async // 2. 关键：异步执行，否则调度器会卡死在这里等待文件转完

@@ -7,6 +7,7 @@ import com.example.moveprog.repository.*;
 import com.example.moveprog.scheduler.TaskLockManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -33,9 +34,11 @@ public class LoadService {
     private final QianyiRepository qianyiRepo;
     private final MigrationJobRepository jobRepo;
     private final TaskLockManager lockManager;
+
     private final JdbcTemplate jdbcTemplate;
 
     // 必须与 ThreadPoolConfig 中的方法名一致，或者使用 @Qualifier("dbLoadExecutor")
+    @Qualifier("dbLoadExecutor")
     private final Executor dbLoadExecutor;
 
     @Async
@@ -65,7 +68,7 @@ public class LoadService {
             List<CsvSplit> splits = splitRepo.findByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
 
             if (splits.isEmpty()) {
-                log.info("任务[{}] 无待装载切分文件，直接完成", detailId);
+                log.info("任务[{}] 没有 待装载切分 文件，直接完成", detailId);
                 finishDetail(detail);
                 return;
             }
