@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Component
@@ -27,32 +28,29 @@ public class MigrationDispatcher {
     private final LoadService loadService;
     private final VerifyService verifyService;
 
-    private final TaskLockManager lockManager;
-
     @Scheduled(fixedDelay = 2000)
     public void dispatch() {
-        // 1. 扫描 NEW (待转码)
-        List<QianyiDetail> newTasks = detailRepo.findByStatus(DetailStatus.NEW);
-        for (QianyiDetail task : newTasks) {
-            if (lockManager.tryLock(task.getId())) {
-                transcodeService.execute(task.getId()); // 异步执行
-            }
-        }
+        // 查询待处理的任务 (根据你的业务逻辑)
+        List<QianyiDetail> details = detailRepo.findByStatusIn(Arrays.asList(
+                DetailStatus.NEW,
+                DetailStatus.WAIT_LOAD, DetailStatus.WAIT_RELOAD,
+                DetailStatus.WAIT_VERIFY
+        ));
 
-        // 2. 扫描 WAIT_LOAD (待装载) 或 WAIT_RELOAD (断点续传)
-        List<QianyiDetail> loadTasks = detailRepo.findByStatusIn(List.of(DetailStatus.WAIT_LOAD, DetailStatus.WAIT_RELOAD));
-        for (QianyiDetail task : loadTasks) {
-            if (lockManager.tryLock(task.getId())) {
-                loadService.execute(task.getId()); // 异步执行
-            }
-        }
-
-        // 3. 新增：验证调度
-        List<QianyiDetail> verifyTasks = detailRepo.findByStatus(DetailStatus.WAIT_VERIFY);
-        for (QianyiDetail task : verifyTasks) {
-            if (lockManager.tryLock(task.getId())) {
-                log.info("调度验证任务: {}", task.getId());
-                verifyService.execute(task.getId()); // 异步执行
+        for (QianyiDetail detail : details) {
+            switch (detail.getStatus()) {
+                case NEW:
+                    transcodeService.execute(detail.getId());
+                    break;
+                case WAIT_LOAD:
+                case WAIT_RELOAD:
+                    loadService.execute(detail.getId());
+                    break;
+                case WAIT_VERIFY:
+                    verifyService.execute(detail.getId());
+                    break;
+                default:
+                    break;
             }
         }
 

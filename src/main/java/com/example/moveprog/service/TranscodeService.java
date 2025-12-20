@@ -2,17 +2,14 @@ package com.example.moveprog.service;
 
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.CsvSplit;
-import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.entity.QianyiDetail;
-import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
-import com.example.moveprog.scheduler.TaskLockManager;
 import com.example.moveprog.util.CharsetFactory;
 import com.example.moveprog.util.FastEscapeHandler;
 import com.google.gson.Gson;
@@ -33,10 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -54,14 +48,24 @@ public class TranscodeService {
 
     private final Gson gson = new Gson();
 
-    @Async // 2. 关键：异步执行，否则调度器会卡死在这里等待文件转完
+    @Async("taskExecutor") // 使用通用线程池, 关键：异步执行，否则调度器会卡死在这里等待文件转完
     public void execute(Long detailId) {
-        QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-        if (detail == null) { lockManager.releaseLock(detailId); return; }
-        log.info(">>> 开始转码: {}", detail.getId());
+        // 1. 【进门加锁】
+        if (!lockManager.tryLock(detailId)) {
+            log.info("转码任务正在运行中，跳过: {}", detailId);
+            return;
+        }
 
         try {
-            // 1. 更新状态
+            // 2. 【状态双重检查】(推荐)
+            // 防止在排队等待线程池期间，状态已被修改
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (detail == null || detail.getStatus() != DetailStatus.NEW) {
+                return;
+            }
+            log.info(">>> 开始转码: {}", detail.getId());
+
+            // 3. 更新状态
             detail.setStatus(DetailStatus.TRANSCODING);
             detailRepo.save(detail);
             log.info("开始转码源文件: {}", detail.getSourceCsvPath());
@@ -75,10 +79,14 @@ public class TranscodeService {
 
         } catch (Exception e) {
             log.error("转码失败", e);
-            detail.setStatus(DetailStatus.FAIL_TRANSCODE);
-            detail.setErrorMsg(e.getMessage());
-            detailRepo.save(detail);
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (null != detail) {
+                detail.setStatus(DetailStatus.FAIL_TRANSCODE);
+                detail.setErrorMsg(e.getMessage());
+                detailRepo.save(detail);
+            }
         } finally {
+            // 3. 【出门解锁】
             lockManager.releaseLock(detailId);
         }
     }
@@ -86,12 +94,11 @@ public class TranscodeService {
 
     private void transcodeSingleSourceFile(Long qianyiId, Long detailId, String sourcePath) throws IOException {
         // 1. 获取配置参数
-        AppProperties.Csv srcConfig = config.getSource();
-        AppProperties.Csv outConfig = config.getOutput();
+        AppProperties.CsvDetailConfig ibmSource = config.getCsv().getIbmSource();
         AppProperties.Performance perfConfig = config.getPerformance();
 
         // 获取 IBM-1388 字符集对象，用于后续的验证
-        Charset ibmCharset = CharsetFactory.resolveCharset(srcConfig.getEncoding());
+        Charset ibmCharset = CharsetFactory.resolveCharset(ibmSource.getEncoding());
         // 【关键配置】使用非严格模式，允许方案B捕获替换字符
         boolean strictMode = false;
         // 后续修改为从表定义文件获取
@@ -99,7 +106,7 @@ public class TranscodeService {
 
         // 【修改点 1】新增：创建 Encoder (用于新版验证) 和获取配置开关
         CharsetEncoder ibmEncoder = ibmCharset.newEncoder();
-        boolean isTunneling = srcConfig.isTunneling();
+        boolean isTunneling = ibmSource.isTunneling();
 
         // 1. 创建 IBM-1388 严格模式 Reader
         try (Reader reader = new InputStreamReader(
@@ -108,14 +115,8 @@ public class TranscodeService {
                 // 创建严格模式的 Reader
                 CharsetFactory.createDecoder(ibmCharset, strictMode));
         ) {
-
-            CsvParserSettings parserSettings = new CsvParserSettings();
             // 根据大机实际情况配置，这里假设是标准CSV
-            parserSettings.getFormat().setLineSeparator(srcConfig.getLineSeparator());
-            parserSettings.getFormat().setDelimiter(srcConfig.getDelimiter());
-            parserSettings.getFormat().setQuote(srcConfig.getQuote());
-            parserSettings.getFormat().setQuoteEscape(srcConfig.getEscape());
-            parserSettings.setMaxCharsPerColumn(perfConfig.getMaxCharsPerColumn()); // 防止溢出
+            CsvParserSettings parserSettings = ibmSource.toParserSettings();
 
             CsvParser parser = new CsvParser(parserSettings);
             parser.beginParsing(reader);
@@ -195,7 +196,7 @@ public class TranscodeService {
                     // 懒加载创建文件
                     if (writer == null) {
                         currentOutPath = Paths.get(config.getJob().getOutputDir(), detailId + "_" + fileIndex + ".csv");
-                        writer = createUtf8Writer(currentOutPath, outConfig, perfConfig);
+                        writer = createUtf8Writer(currentOutPath);
                     }
 
                     // 2. 注入行号 (放到第一列)
@@ -243,20 +244,15 @@ public class TranscodeService {
         return migraRepo.findActiveStatusById(qianyiById.getJobId());
     }
 
-    private CsvWriter createUtf8Writer(Path path, AppProperties.Csv outConfig, AppProperties.Performance perfConfig) throws IOException {
-        CsvWriterSettings settings = new CsvWriterSettings();
-
-        // 应用输出格式配置
-        settings.getFormat().setDelimiter(outConfig.getDelimiter()); // 目标分隔符
-        settings.getFormat().setQuote(outConfig.getQuote());
-        settings.getFormat().setLineSeparator(outConfig.getLineSeparator());
+    private CsvWriter createUtf8Writer(Path path) throws IOException {
+        AppProperties.Performance performance = config.getPerformance();
+        AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
+        CsvWriterSettings settings = utf8Split.toWriterSettings();
         settings.setQuoteAllFields(true); // TDSQL 建议全引, 通常数据库导入建议全引用，或者加一个配置项控制
-        // 内部 buffer
-        settings.setMaxCharsPerColumn(perfConfig.getMaxCharsPerColumn());
 
         Writer out = new BufferedWriter(new OutputStreamWriter(
-                Files.newOutputStream(path), Charset.forName(outConfig.getEncoding())),
-                perfConfig.getWriteBufferSize()); // 加大写缓冲
+                Files.newOutputStream(path), Charset.forName(utf8Split.getEncoding())),
+                performance.getWriteBufferSize()); // 加大写缓冲
         return new CsvWriter(out, settings);
     }
 

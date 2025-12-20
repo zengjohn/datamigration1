@@ -6,10 +6,11 @@ import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.enums.VerifyStrategy;
 import com.example.moveprog.repository.*;
-import com.example.moveprog.scheduler.TaskLockManager;
 import com.example.moveprog.service.impl.CsvRowIterator;
 import com.example.moveprog.service.impl.JdbcRowIterator;
-import com.google.gson.Gson;
+import com.example.moveprog.util.CharsetFactory;
+import com.univocity.parsers.csv.CsvParser;
+import com.univocity.parsers.csv.CsvParserSettings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,7 +36,7 @@ public class VerifyService {
     private final TaskLockManager lockManager;
 
     private final CoreComparator coreComparator; // 注入上一轮写的比对器
-    // 注入刚才配置的专用线程池
+    // 注入刚才配置的专用线程池(使用 Verify 专用线程池)
     @Qualifier("verifyExecutor")
     private final Executor verifyExecutor;
 
@@ -48,18 +49,20 @@ public class VerifyService {
      */
     @Async("taskExecutor") // 外层异步，避免阻塞 Controller
     public void execute(Long detailId) {
-        // 1. 尝试加锁
+        // 1. 【进门加锁】
         if (!lockManager.tryLock(detailId)) {
-            log.warn("任务正在运行中，跳过: {}", detailId);
+            log.info("校验任务正在运行中，跳过: {}", detailId);
             return;
         }
 
         VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
 
-        QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-        if (detail == null) { lockManager.releaseLock(detailId); return; }
-
         try {
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (detail == null || detail.getStatus() != DetailStatus.WAIT_VERIFY) {
+                return;
+            }
+
             log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
 
             // 2. 准备基础数据
@@ -101,10 +104,14 @@ public class VerifyService {
 
         } catch (Exception e) {
             log.error("比对主流程异常", e);
-            detail.setStatus(DetailStatus.WAIT_VERIFY);
-            detail.setErrorMsg("系统异常: " + e.getMessage());
-            detailRepo.save(detail);
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (null != detail) {
+                detail.setStatus(DetailStatus.WAIT_VERIFY);
+                detail.setErrorMsg("系统异常: " + e.getMessage());
+                detailRepo.save(detail);
+            }
         } finally {
+            // 2. 【出门解锁】
             lockManager.releaseLock(detailId);
         }
     }
@@ -168,10 +175,23 @@ public class VerifyService {
             // 假设 detail 里能取到 sourceFilePath
             QianyiDetail detailById = detailRepo.findById(split.getDetailId()).orElse(null);
             String sourcePath = detailById.getSourceCsvPath();
-            return new CsvRowIterator(sourcePath, "IBM1388", split.getStartRowNo() - 1, split.getRowCount());
+
+            AppProperties.CsvDetailConfig ibmSource = config.getCsv().getIbmSource();
+            CsvParserSettings settings = ibmSource.toParserSettings();
+            // 配置跳过
+            if (split.getStartRowNo() > 1) {
+                settings.setNumberOfRowsToSkip(split.getStartRowNo() - 1);
+            }
+            CsvParser csvParser = new CsvParser(settings);
+            // 配置读取限制
+            settings.setNumberOfRecordsToRead(split.getRowCount());
+            return new CsvRowIterator(sourcePath, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()));
         } else {
+            AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
+            CsvParserSettings settings = utf8Split.toParserSettings();
+            CsvParser csvParser = new CsvParser(settings);
             // 策略 A: 读切分文件 UTF-8
-            return new CsvRowIterator(split.getSplitFilePath(), "UTF-8", 0, null);
+            return new CsvRowIterator(split.getSplitFilePath(), csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()));
         }
     }
 

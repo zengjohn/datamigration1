@@ -6,7 +6,10 @@ import lombok.Data;
 
 @Entity
 @Data
-@Table(name = "csv_split")
+@Table(name = "csv_split", indexes = {
+        @Index(name = "idx_detail_id", columnList = "detail_id"), // 加速 findByDetailId
+        @Index(name = "idx_status", columnList = "status")       // 加速状态过滤
+})
 public class CsvSplit {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

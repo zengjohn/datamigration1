@@ -4,7 +4,6 @@ import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.repository.*;
-import com.example.moveprog.scheduler.TaskLockManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -44,13 +43,19 @@ public class LoadService {
 
     @Async
     public void execute(Long detailId) {
-        QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-        if (detail == null) {
-            lockManager.releaseLock(detailId);
+        // 1. 【进门加锁】
+        if (!lockManager.tryLock(detailId)) {
+            log.info("装载任务正在运行中，跳过: {}", detailId);
             return;
         }
 
         try {
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (detail == null ||
+                    !(detail.getStatus() == DetailStatus.WAIT_LOAD || detail.getStatus() == DetailStatus.WAIT_RELOAD)) {
+                return;
+            }
+
             // 0. 更新状态为正在装载
             detail.setStatus(DetailStatus.LOADING);
             detailRepo.save(detail);
@@ -105,10 +110,14 @@ public class LoadService {
 
         } catch (Exception e) {
             log.error("装载流程异常 TaskId={}", detailId, e);
-            detail.setStatus(DetailStatus.FAIL_LOAD);
-            detail.setErrorMsg(e.getMessage());
-            detailRepo.save(detail);
+            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
+            if (null != detail) {
+                detail.setStatus(DetailStatus.FAIL_LOAD);
+                detail.setErrorMsg(e.getMessage());
+                detailRepo.save(detail);
+            }
         } finally {
+            // 2. 【出门解锁】
             lockManager.releaseLock(detailId);
         }
     }

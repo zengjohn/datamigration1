@@ -28,20 +28,25 @@ spring:
 
 # 自定义应用配置
 app:
-  # 1. 源端 CSV 配置 (IBM 大机文件)
-  source:
-    encoding: UTF-8        # 核心编码
-    delimiter: ','            # 列分隔符
-    line-separator: "\n"      # 行结束符 (注意双引号，防止被yaml转义)
-    quote: '"'                # 引用符
-    escape: '"'               # 转义符
+  # CSV 配置
+  csv:
+    # 1. 源文件 IBM1388 配置
+    ibm-source:
+      encoding: UTF-8        # 核心编码
+      delimiter: ','            # 列分隔符
+      line-separator: "\n"      # 行结束符 (注意双引号，防止被yaml转义)
+      quote: '"'                # 引用符
+      escape: '"'               # 转义符,
+      header-extraction: false
+      tunneling: false
+      maxCharsPerColumn: 100000
 
-  # 2. 输出 CSV 配置 (Target TDSQL/MySQL Load Data)
-  output:
-    encoding: UTF-8
-    delimiter: '|'            # 通常数据库导入喜欢用 | 分隔
-    quote: '"'
-    line-separator: "\n"
+    # 2. 中间文件 UTF-8 配置
+    utf8-split:
+      encoding: UTF-8
+      line-separator: "\n"
+      delimiter: '|'
+      quote: '"'
 
   # 3. 性能参数调优
   performance:

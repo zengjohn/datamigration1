@@ -9,7 +9,6 @@ import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 
 public class CsvRowIterator implements CloseableRowIterator {
-
     private final InputStreamReader reader;
     private final CsvParser parser;
     private String[] nextRow;
@@ -17,24 +16,12 @@ public class CsvRowIterator implements CloseableRowIterator {
     /**
      * @param filePath 文件路径
      * @param charset 编码 (UTF-8 或 IBM1388)
-     * @param skipRows 需要跳过的行数 (UTF-8传0, 源文件传 startRow-1)
-     * @param limitRows 需要读取的行数 (UTF-8传null/无限, 源文件传 rowCount)
      */
-    public CsvRowIterator(String filePath, String charset, long skipRows, Long limitRows) throws Exception {
-        this.reader = new InputStreamReader(new FileInputStream(filePath), Charset.forName(charset));
-        
-        CsvParserSettings settings = new CsvParserSettings();
-        settings.getFormat().setLineSeparator("\n");
-        // 配置跳过
-        if (skipRows > 0) {
-            settings.setNumberOfRowsToSkip(skipRows);
-        }
-        // 配置读取限制
-        if (limitRows != null && limitRows > 0) {
-            //settings.setNumberOfRowsToProcess(limitRows);
-        }
+    public CsvRowIterator(String filePath, CsvParser parser, Charset charset) throws Exception {
+        this.reader = new InputStreamReader(new FileInputStream(filePath), charset);
 
-        this.parser = new CsvParser(settings);
+        this.parser = parser;
+        //this.parser = new CsvParser(settings);
         this.parser.beginParsing(reader);
         this.nextRow = parser.parseNext(); // 预读
     }

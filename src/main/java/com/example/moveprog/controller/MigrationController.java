@@ -4,11 +4,8 @@ import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.repository.*;
-import com.example.moveprog.scheduler.TaskLockManager;
-import com.example.moveprog.service.LoadService;
-import com.example.moveprog.service.TranscodeService;
+import com.example.moveprog.service.TaskLockManager;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;

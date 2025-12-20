@@ -1,4 +1,4 @@
-package com.example.moveprog.scheduler;
+package com.example.moveprog.service;
 
 import org.springframework.stereotype.Component;
 

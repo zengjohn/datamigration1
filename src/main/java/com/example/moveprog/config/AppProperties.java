@@ -1,5 +1,7 @@
 package com.example.moveprog.config;
 
+import com.univocity.parsers.csv.CsvParserSettings;
+import com.univocity.parsers.csv.CsvWriterSettings;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -9,22 +11,68 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "app") // 对应 application.yml 中的 app:
 public class AppProperties {
 
+    // 1. CSV 相关配置 (对应 app.csv)
     // 嵌套配置类
-    private Csv source = new Csv();
-    private Csv output = new Csv();
+    private Csv csv = new Csv();
+
+    // 2. 性能/并发相关配置 (对应 app.performance)
     private Performance performance = new Performance();
+
     private Job job = new Job();
+
     private Verify verify = new Verify();
 
     @Data
     public static class Csv {
+        // 场景 A: IBM 源文件配置
+        private CsvDetailConfig ibmSource = new CsvDetailConfig();
+
+        // 场景 B: UTF-8 拆分文件配置
+        private CsvDetailConfig utf8Split = new CsvDetailConfig();
+    }
+
+    /**
+     * 复用具体的 CSV 细节配置类
+     * 包含 encoding, delimiter 以及生成 Settings 的工厂方法
+     */
+    @Data
+    public static class CsvDetailConfig {
         private String encoding = "UTF-8";
+        private String lineSeparator = "\n";
         private char delimiter = ',';
         private char quote = '"';
-        private char escape = '"';
-        private String lineSeparator = "\n";
-        private boolean headerPresent = false;
-        private boolean tunneling = false; // 是否使用啦“转义序列打包（Tunneling）”技术是解决老旧大机字符集（IBM-1388/GBK）无法覆盖 Unicode 大字符集（CJK 扩展区）
+        private char quoteEscape = '"';
+        private boolean headerExtraction = false;
+        private int maxCharsPerColumn = 4096;
+        private boolean tunneling = false; // 大机用转义来表示编码不支持的生僻字（大机IBM1388可能有这种情况)
+
+        /**
+         * 生成读取配置 (ParserSettings)
+         */
+        public CsvParserSettings toParserSettings() {
+            CsvParserSettings settings = new CsvParserSettings();
+            settings.getFormat().setLineSeparator(this.lineSeparator);
+            settings.getFormat().setDelimiter(this.delimiter);
+            settings.getFormat().setQuote(this.quote);
+            settings.getFormat().setQuoteEscape(this.quoteEscape);
+            settings.setHeaderExtractionEnabled(this.headerExtraction);
+            settings.setMaxCharsPerColumn(this.maxCharsPerColumn);
+            settings.setReadInputOnSeparateThread(false);
+            return settings;
+        }
+
+        /**
+         * 生成写入配置 (WriterSettings)
+         */
+        public CsvWriterSettings toWriterSettings() {
+            CsvWriterSettings settings = new CsvWriterSettings();
+            settings.getFormat().setLineSeparator(this.lineSeparator);
+            settings.getFormat().setDelimiter(this.delimiter);
+            settings.getFormat().setQuote(this.quote);
+            settings.getFormat().setQuoteEscape(this.quoteEscape);
+            settings.setQuoteAllFields(true);
+            return settings;
+        }
     }
 
     @Data
@@ -35,8 +83,6 @@ public class AppProperties {
         private int writeBufferSize = 1 * 1024 * 1024;
         // 切分行数
         private int splitRows = 500_000;
-        // Univocity 解析器内部 buffer (字符数)
-        private int maxCharsPerColumn = 100_000;
     }
 
     @Data
