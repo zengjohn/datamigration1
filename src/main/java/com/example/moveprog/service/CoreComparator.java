@@ -39,10 +39,21 @@ public class CoreComparator {
 
     // 具体的一行比对逻辑
     private void doCompare(long rowNum, String[] dbRow, String[] fileRow) {
-        // 假设比对列数以文件为准
+        // 1. 校验列数
         if (dbRow.length != fileRow.length) {
-            // 注意：如果DB查询出的列数和CSV不一样，这里需要处理映射关系，或者在SQL里只查特定列
-            // throw new RuntimeException("列数不匹配...");
+            throw new RuntimeException("列数不一致");
+        }
+
+        // 2. 先校验行号 (数组最后一个元素)
+        String dbRowNum = dbRow[dbRow.length - 1];
+        String fileRowNum = fileRow[fileRow.length - 1];
+
+        if (!dbRowNum.equals(fileRowNum)) {
+            // 这是最关键的报错：说明发生了错位！
+            // 比如 DB 是行号3，文件读到了行号2(如果不跳空行)或者行号4
+            throw new RuntimeException(String.format(
+                    "行号对齐失败 (错位): DB行号=%s, 文件行号=%s", dbRowNum, fileRowNum
+            ));
         }
 
         for (int i = 0; i < fileRow.length; i++) {

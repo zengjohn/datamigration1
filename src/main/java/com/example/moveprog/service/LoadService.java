@@ -11,16 +11,10 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -60,61 +54,64 @@ public class LoadService {
             detail.setStatus(DetailStatus.LOADING);
             detailRepo.save(detail);
 
-            // 1. 获取上下文信息
-            Qianyi batch = qianyiRepo.findById(detail.getQianyiId())
-                    .orElseThrow(() -> new RuntimeException("批次不存在"));
-
-            // 2. 解析 DDL 获取列名列表 (用于构造 LOAD DATA 语句)
-            // 假设 DDL 文件路径存在 batch.getDdlFilePath() 中
-            List<String> columnNames = parseColumnNamesFromDdl(batch.getDdlFilePath());
-
-            // 3. 获取待装载切分文件 (排除已成功的)
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
-
-            if (splits.isEmpty()) {
+            long failLoadCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WV);
+            if (0 == failLoadCount) {
                 log.info("任务[{}] 没有 待装载切分 文件，直接完成", detailId);
-                finishDetail(detail);
+                finishDetailLoad(detail);
                 return;
             }
 
-            log.info("任务[{}] 开始并发装载 {} 个文件, 表: {}", detailId, splits.size(), batch.getTableName());
+            // 1. 获取上下文信息
+            Qianyi batch = qianyiRepo.findById(detail.getQianyiId()).orElseThrow(() -> new RuntimeException("批次不存在"));
 
-            MigrationJob job = jobRepo.findById(batch.getJobId())
-                    .orElseThrow(() -> new RuntimeException("作业配置不存在"));
-            // 准备数据库连接信息
-            String url = job.getTargetJdbcUrl();
-            String user = job.getTargetUser();
-            String password = job.getTargetPassword();
+            // 2. 解析 DDL 获取列名列表 (用于构造 LOAD DATA 语句)
+            // 假设 DDL 文件路径存在 batch.getDdlFilePath() 中
+            List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(batch.getDdlFilePath());
 
-            // 4. 并发装载
-            List<CompletableFuture<Void>> futures = splits.stream()
-                    .map(split -> CompletableFuture.runAsync(() -> {
-                        // 调用原子装载方法
-                        // 传入连接信息，而不是用注入的 template
-                        loadSingleSplitFile(batch.getTableName(), split, columnNames, url, user, password);
-                    }, dbLoadExecutor))
-                    .collect(Collectors.toList());
+            // 3. 获取待装载切分文件 (待装载)
+            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WL);
+            if (!splits.isEmpty()) {
+                log.info("任务[{}] 开始并发装载 {} 个文件, 表: {}", detailId, splits.size(), batch.getTableName());
 
-            // 等待所有任务结束
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                MigrationJob job = jobRepo.findById(batch.getJobId())
+                        .orElseThrow(() -> new RuntimeException("作业配置不存在"));
+                // 准备数据库连接信息
+                String url = job.getTargetJdbcUrl();
+                String user = job.getTargetUser();
+                String password = job.getTargetPassword();
 
-            // 5. 检查最终结果
-            long failCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
-            if (failCount == 0) {
-                finishDetail(detail);
-            } else {
-                detail.setStatus(DetailStatus.WAIT_RELOAD); // 等待重试
-                detail.setErrorMsg("有 " + failCount + " 个切分文件装载失败");
-                detailRepo.save(detail);
+                // 4. 并发装载
+                List<CompletableFuture<Void>> futures = splits.stream()
+                        .map(split -> CompletableFuture.runAsync(() -> {
+                            // 调用原子装载方法
+                            // 传入连接信息，而不是用注入的 template
+                            loadSingleSplitFile(batch.getTableName(), split, columnNames, url, user, password);
+                        }, dbLoadExecutor))
+                        .collect(Collectors.toList());
+
+                // 等待所有任务结束
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             }
 
+            // 5. 检查最终结果
+            long failLoadCount1 = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WV);
+            if (failLoadCount1 == 0) {
+                finishDetailLoad(detail);
+                log.info("装载成功 detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
+            } else {
+                detail.setStatus(DetailStatus.WAIT_RELOAD); // 等待重试
+                detail.setErrorMsg("有 " + failLoadCount1 + " 个切分文件装载失败");
+                detailRepo.save(detail);
+            }
         } catch (Exception e) {
-            log.error("装载流程异常 TaskId={}", detailId, e);
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
             if (null != detail) {
+                log.error("装载流程异常 detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath(), e);
                 detail.setStatus(DetailStatus.FAIL_LOAD);
                 detail.setErrorMsg(e.getMessage());
                 detailRepo.save(detail);
+            } else {
+                log.error("装载流程异常 TaskId={}", detailId, e);
             }
         } finally {
             // 2. 【出门解锁】
@@ -127,7 +124,7 @@ public class LoadService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void loadSingleSplitFile(String tableName, CsvSplit split, List<String> columnNames, String url, String user, String pwd) {
-        log.info("开始装载切分文件: ID={}", split.getId());
+        log.info("开始装载切分文件: tableName: {}, split id: {}", tableName, split.getId());
 
         try (Connection conn = DriverManager.getConnection(url, user, pwd)) {
             // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)
@@ -146,7 +143,7 @@ public class LoadService {
             executeUpdateSql(conn, loadSql);
 
             // Step 3: 标记成功
-            split.setStatus(CsvSplitStatus.PASS);
+            split.setStatus(CsvSplitStatus.WV);
             split.setErrorMsg(null);
             splitRepo.save(split);
         } catch (Exception e) {
@@ -165,30 +162,6 @@ public class LoadService {
             log.error("failed to execute {}", sql);
             throw e;
         }
-    }
-
-    /**
-     * 解析 DDL CSV 文件获取列名
-     * 格式: 列名, 类型
-     */
-    private List<String> parseColumnNamesFromDdl(String ddlPath) throws IOException {
-        List<String> columns = new ArrayList<>();
-        // 使用简单的 BufferedReader 读取，因为格式很简单
-        try (BufferedReader br = Files.newBufferedReader(Paths.get(ddlPath), StandardCharsets.UTF_8)) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                
-                // 按逗号分割，取第一列
-                // 注意：如果列名本身包含逗号，这里需要更复杂的解析，但通常数据库列名不会有逗号
-                String[] parts = line.split(","); 
-                if (parts.length >= 1) {
-                    columns.add(parts[0].trim());
-                }
-            }
-        }
-        return columns;
     }
 
     /**
@@ -229,7 +202,7 @@ public class LoadService {
         return sb.toString();
     }
 
-    private void finishDetail(QianyiDetail detail) {
+    private void finishDetailLoad(QianyiDetail detail) {
         // 可以设置为 WAIT_VERIFY 等待后续校验，或者直接 PASS
         detail.setStatus(DetailStatus.WAIT_VERIFY); 
         detail.setProgress(100);

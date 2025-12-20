@@ -4,7 +4,6 @@ import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.enums.CsvSplitStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
@@ -14,11 +13,7 @@ import java.util.List;
 @Repository
 public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
 
-    /**
-     * 查询某源文件任务下，所有未成功的切分文件
-     * 用途: LoadService 获取待装载列表 (支持断点续传，自动跳过 PASS 的)
-     */
-    List<CsvSplit> findByDetailIdAndStatusNot(Long detailId, CsvSplitStatus status);
+    List<CsvSplit> findByDetailIdAndStatus(Long detailId, CsvSplitStatus status);
 
     List<CsvSplit> findByDetailId(Long detailId);
 

@@ -63,12 +63,11 @@ public class TranscodeService {
             if (detail == null || detail.getStatus() != DetailStatus.NEW) {
                 return;
             }
-            log.info(">>> 开始转码: {}", detail.getId());
+            log.info(">>> 开始转码, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
 
             // 3. 更新状态
             detail.setStatus(DetailStatus.TRANSCODING);
             detailRepo.save(detail);
-            log.info("开始转码源文件: {}", detail.getSourceCsvPath());
 
             transcodeSingleSourceFile(detail.getQianyiId(), detail.getId(), detail.getSourceCsvPath());
 
@@ -76,14 +75,16 @@ public class TranscodeService {
             detail.setStatus(DetailStatus.WAIT_LOAD);
             detail.setProgress(100);
             detailRepo.save(detail);
-
+            log.info(">>> 转码成功, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
         } catch (Exception e) {
-            log.error("转码失败", e);
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
             if (null != detail) {
+                log.error("转码失败, detail id: {}, 源文件: {}, detail.getId(), detail.getSourceCsvPath()", e);
                 detail.setStatus(DetailStatus.FAIL_TRANSCODE);
                 detail.setErrorMsg(e.getMessage());
                 detailRepo.save(detail);
+            } else {
+                log.error("转码失败", e);
             }
         } finally {
             // 3. 【出门解锁】

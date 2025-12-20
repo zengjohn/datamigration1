@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: moveprog
+  autoconfigure:
+    exclude: com.github.gavlyukovskiy.boot.jdbc.decorator.DataSourceDecoratorAutoConfiguration
 
   # 数据库配置 (存放 qianyi_main, qianyi_detail 的元数据库)
   datasource:
@@ -33,20 +35,21 @@ app:
     # 1. 源文件 IBM1388 配置
     ibm-source:
       encoding: UTF-8        # 核心编码
-      delimiter: ','            # 列分隔符
-      line-separator: "\n"      # 行结束符 (注意双引号，防止被yaml转义)
-      quote: '"'                # 引用符
-      escape: '"'               # 转义符,
-      header-extraction: false
-      tunneling: false
-      maxCharsPerColumn: 100000
+      # [关键] 换行符设置
+      # 方式 A: 自动检测 (推荐，能适应 \n 和 \r\n)
+      line-separator: AUTO
+      # 方式 B: 强制指定 (如果你非常确定)
+      # line-separator: "\n"
+      # [关键] 大机文件通常字段很多或很长，防止报错
+      max-chars-per-column: 50000
+      # 假如源文件用分号分隔
+      delimiter: ;
+      # 假如源文件不带引号
+      quote: "\0"  # 这是一个特殊技巧，用空字符表示无引号
 
     # 2. 中间文件 UTF-8 配置
     utf8-split:
       encoding: UTF-8
-      line-separator: "\n"
-      delimiter: '|'
-      quote: '"'
 
   # 3. 性能参数调优
   performance:
@@ -69,3 +72,16 @@ logging:
           descriptor:
             sql:
               BasicBinder: INFO
+        orm:
+          jdbc:
+            bind: INFO
+  # P6Spy 配置 (前提是引入了 p6spy-spring-boot-starter)
+  decorator:
+    datasource:
+      enabled: false
+      p6spy:
+        enable-logging: false
+        # 开启多行变单行，去掉了换行符，方便复制
+        multiline: true
+        # 自定义日志格式：执行时间 | SQL语句
+        log-format: "%(executionTime) ms | %(sql)"

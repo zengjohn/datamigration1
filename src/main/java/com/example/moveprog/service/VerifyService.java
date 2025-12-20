@@ -62,39 +62,39 @@ public class VerifyService {
             if (detail == null || detail.getStatus() != DetailStatus.WAIT_VERIFY) {
                 return;
             }
-
-            log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
+            // 查询所以未成功的明细
+            long notPassCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
+            if (0 == notPassCount) {
+                log.info("detail id: {} , 源文件: {} 没有需要比对的分片", detail.getId(), detail.getSourceCsvPath());
+                markDetailSuccess(detail);
+                return;
+            }
 
             // 2. 准备基础数据
             Qianyi batch = qianyiRepo.findById(detail.getQianyiId()).orElseThrow();
             MigrationJob job = jobRepo.findById(batch.getJobId()).orElseThrow();
 
-            // 3. 获取待比对的分片 (通常比对那些非 PASS 的，或者是全部重新比对，看业务需求)
-            // 这里假设比对所有未通过的，或者 Failed 的允许重试
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
+            // 3. 获取待比对的分片
+            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WV);
+            if (!splits.isEmpty()) {
+                log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
 
-            if (splits.isEmpty()) {
-                log.info("没有需要比对的分片");
-                markDetailSuccess(detail);
-                return;
+                // 4. 并发执行 (Fan-out)
+                List<CompletableFuture<Void>> futures = splits.stream()
+                        .map(split -> CompletableFuture.runAsync(() -> {
+                            // 每个分片单独执行比对
+                            doVerifySingleSplit(batch.getDdlFilePath(), split, batch.getTableName(), job, strategy);
+                        }, verifyExecutor)) // <--- 使用专用线程池
+                        .collect(Collectors.toList());
+
+                // 5. 等待所有任务完成 (Join)
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             }
-
-            // 4. 并发执行 (Fan-out)
-            List<CompletableFuture<Void>> futures = splits.stream()
-                    .map(split -> CompletableFuture.runAsync(() -> {
-                        // 每个分片单独执行比对
-                        doVerifySingleSplit(split, batch.getTableName(), job, strategy);
-                    }, verifyExecutor)) // <--- 使用专用线程池
-                    .collect(Collectors.toList());
-
-            // 5. 等待所有任务完成 (Join)
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
             // 6. 汇总结果 (Fan-in)
             // 再次查询数据库，看是否还有非 PASS 的状态
             long failCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
-
-            if (failCount == 0) {
+            if (0 == failCount) {
                 markDetailSuccess(detail);
             } else {
                 detail.setStatus(DetailStatus.WAIT_VERIFY); // 或 PARTIAL_FAIL
@@ -103,12 +103,14 @@ public class VerifyService {
             }
 
         } catch (Exception e) {
-            log.error("比对主流程异常", e);
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
             if (null != detail) {
+                log.error("比对主流程异常 detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath(), e);
                 detail.setStatus(DetailStatus.WAIT_VERIFY);
                 detail.setErrorMsg("系统异常: " + e.getMessage());
                 detailRepo.save(detail);
+            } else {
+                log.error("比对主流程异常", e);
             }
         } finally {
             // 2. 【出门解锁】
@@ -128,7 +130,7 @@ public class VerifyService {
      * 单个分片的具体执行逻辑
      * 捕获所有异常，确保不中断主线程的 join
      */
-    private void doVerifySingleSplit(CsvSplit split, String tableName, MigrationJob job, VerifyStrategy strategy) {
+    private void doVerifySingleSplit(String ddlFilePath, CsvSplit split, String tableName, MigrationJob job, VerifyStrategy strategy) {
         try {
             // 设置状态为处理中 (可选，便于UI展示进度)
             // split.setStatus(CsvSplitStatus.VERIFYING); splitRepo.save(split);
@@ -137,8 +139,10 @@ public class VerifyService {
             String user = job.getTargetUser();
             String pwd = job.getTargetPassword();
 
+            List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(ddlFilePath);
+            String columnList = columnNames.stream().collect(Collectors.joining(",")) + ","+"source_row_no";
             // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
-            String sql = "SELECT * FROM " + tableName + " WHERE csvid = ? ORDER BY source_row_no";
+            String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = ? ORDER BY source_row_no";
 
             // 使用 try-with-resources 自动关闭两个迭代器
             try (
@@ -158,7 +162,7 @@ public class VerifyService {
             splitRepo.save(split);
 
         } catch (Exception e) {
-            log.error("分片比对失败: SplitId={}", split.getId(), e);
+            log.error("分片比对失败: detail id: {} split id: {}", split.getDetailId(), split.getId(), e);
             split.setStatus(CsvSplitStatus.FAIL);
             // 截取部分错误信息防止数据库字段溢出
             String msg = e.getMessage();
@@ -185,13 +189,18 @@ public class VerifyService {
             CsvParser csvParser = new CsvParser(settings);
             // 配置读取限制
             settings.setNumberOfRecordsToRead(split.getRowCount());
-            return new CsvRowIterator(sourcePath, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()));
+            // 读取源文件：偏移量通常是 0 (因为 context.currentLine() 就是真实行号)
+            return new CsvRowIterator(sourcePath, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()), 0);
         } else {
             AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
             CsvParserSettings settings = utf8Split.toParserSettings();
             CsvParser csvParser = new CsvParser(settings);
-            // 策略 A: 读切分文件 UTF-8
-            return new CsvRowIterator(split.getSplitFilePath(), csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()));
+            // 读取拆分文件 (UTF-8)：
+            // 情况 A: 拆分文件里第一行就是原文件的第 10001 行的数据
+            // 此时 context.currentLine() = 1，我们需要它变成 10001
+            // 所以 offset = split.getStartRowNo() - 1
+            long offset = split.getStartRowNo() - 1;
+            return new CsvRowIterator(split.getSplitFilePath(), csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()), offset);
         }
     }
 
