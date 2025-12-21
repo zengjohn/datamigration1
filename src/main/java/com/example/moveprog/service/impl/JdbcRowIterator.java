@@ -1,26 +1,31 @@
 package com.example.moveprog.service.impl;
 
 import com.example.moveprog.service.CloseableRowIterator;
+import lombok.extern.slf4j.Slf4j;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 
+@Slf4j
 public class JdbcRowIterator implements CloseableRowIterator {
 
     private final Connection conn;
-    private final PreparedStatement ps;
+    private final String sql; // 方便调试
+    private final Statement ps;
     private final ResultSet rs;
     private final int colCount;
     private boolean hasNext;
 
-    public JdbcRowIterator(String url, String user, String pwd, String sql, Long splitId) throws SQLException {
+    public JdbcRowIterator(String url, String user, String pwd, String sql) throws SQLException {
+        this.sql = sql;
+
         this.conn = java.sql.DriverManager.getConnection(url, user, pwd);
-        this.ps = conn.prepareStatement(sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+        this.ps = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
         this.ps.setFetchSize(Integer.MIN_VALUE); // 开启流式
-        this.ps.setLong(1, splitId);
-        this.rs = ps.executeQuery();
+        if (log.isDebugEnabled()) {
+            log.debug("{} splitId: {}", sql);
+        }
+
+        this.rs = ps.executeQuery(sql);
         this.colCount = rs.getMetaData().getColumnCount();
         this.hasNext = rs.next(); // 预读第一行
     }

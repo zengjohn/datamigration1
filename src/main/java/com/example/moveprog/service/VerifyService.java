@@ -133,7 +133,8 @@ public class VerifyService {
     private void doVerifySingleSplit(String ddlFilePath, CsvSplit split, String tableName, MigrationJob job, VerifyStrategy strategy) {
         try {
             // 设置状态为处理中 (可选，便于UI展示进度)
-            // split.setStatus(CsvSplitStatus.VERIFYING); splitRepo.save(split);
+            // split.setStatus(CsvSplitStatus.VERIFYING);
+            // splitRepo.save(split);
 
             String dbUrl = job.getTargetJdbcUrl();
             String user = job.getTargetUser();
@@ -142,12 +143,12 @@ public class VerifyService {
             List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(ddlFilePath);
             String columnList = columnNames.stream().collect(Collectors.joining(",")) + ","+"source_row_no";
             // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
-            String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = ? ORDER BY source_row_no";
+            String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = " + split.getId() + " ORDER BY source_row_no";
 
             // 使用 try-with-resources 自动关闭两个迭代器
             try (
                     // 1. 构建 DB 迭代器
-                    CloseableRowIterator dbIter = new JdbcRowIterator(dbUrl, user, pwd, sql, split.getId());
+                    CloseableRowIterator dbIter = new JdbcRowIterator(dbUrl, user, pwd, sql);
 
                     // 2. 构建 文件 迭代器 (工厂方法见上一轮回答)
                     CloseableRowIterator fileIter = createFileIterator(split, strategy)
@@ -184,13 +185,13 @@ public class VerifyService {
             CsvParserSettings settings = ibmSource.toParserSettings();
             // 配置跳过
             if (split.getStartRowNo() > 1) {
-                settings.setNumberOfRowsToSkip(split.getStartRowNo() - 1);
+                settings.setNumberOfRowsToSkip(split.getStartRowNo());
             }
+            settings.setNumberOfRecordsToRead(split.getRowCount());
             CsvParser csvParser = new CsvParser(settings);
             // 配置读取限制
-            settings.setNumberOfRecordsToRead(split.getRowCount());
             // 读取源文件：偏移量通常是 0 (因为 context.currentLine() 就是真实行号)
-            return new CsvRowIterator(sourcePath, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()), 0);
+            return new CsvRowIterator(sourcePath, false, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()), 0);
         } else {
             AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
             CsvParserSettings settings = utf8Split.toParserSettings();
@@ -199,8 +200,7 @@ public class VerifyService {
             // 情况 A: 拆分文件里第一行就是原文件的第 10001 行的数据
             // 此时 context.currentLine() = 1，我们需要它变成 10001
             // 所以 offset = split.getStartRowNo() - 1
-            long offset = split.getStartRowNo() - 1;
-            return new CsvRowIterator(split.getSplitFilePath(), csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()), offset);
+            return new CsvRowIterator(split.getSplitFilePath(), true, csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
         }
     }
 

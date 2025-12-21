@@ -121,6 +121,9 @@ public class LoadService {
 
     /**
      * 单个切分文件装载 (原子操作：删 + 插)
+     * @param tableName
+     * @param split
+     * @param columnNames csv ddl中定义的列名
      */
     @Transactional(rollbackFor = Exception.class)
     public void loadSingleSplitFile(String tableName, CsvSplit split, List<String> columnNames, String url, String user, String pwd) {
@@ -130,7 +133,7 @@ public class LoadService {
             // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)
             // 注意：LOAD DATA LOCAL INFILE 需要特殊的驱动设置
             // Step 1: 幂等删除 (根据 csvid 清理旧数据)
-            String deleteSql = String.format("DELETE FROM %s WHERE csvid=" + split.getId(), tableName);
+            String deleteSql = "DELETE FROM " + tableName + " WHERE csvid=" + split.getId();
             executeUpdateSql(conn, deleteSql);
 
             // Step 2: 构造 LOAD DATA SQL
@@ -190,14 +193,10 @@ public class LoadService {
         for (String col : columns) {
             sb.append(col).append(", ");
         }
-        // 2. 最后一列读取到变量 @ln (这是 TranscodeService 追加的行号)
-        sb.append("@ln) ");
-
-        // --- 关键部分：赋值 ---
-        // 设置 csvid 和 source_row_no
-        sb.append("SET ");
-        sb.append("csvid = ").append(splitId).append(", "); // 赋值当前切分ID
-        sb.append("source_row_no = @ln"); // 将变量赋值给表字段
+        sb.append("source_row_no");
+        sb.append(")");
+        // -- 【关键】在这里把当前的 csvid 赋值给每一行
+        sb.append("SET csvid=").append(splitId);
 
         return sb.toString();
     }

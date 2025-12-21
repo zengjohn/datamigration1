@@ -37,15 +37,15 @@ app:
       encoding: UTF-8        # 核心编码
       # [关键] 换行符设置
       # 方式 A: 自动检测 (推荐，能适应 \n 和 \r\n)
-      line-separator: AUTO
+      #line-separator: AUTO
       # 方式 B: 强制指定 (如果你非常确定)
       # line-separator: "\n"
       # [关键] 大机文件通常字段很多或很长，防止报错
       max-chars-per-column: 50000
       # 假如源文件用分号分隔
-      delimiter: ;
+      #delimiter: ;
       # 假如源文件不带引号
-      quote: "\0"  # 这是一个特殊技巧，用空字符表示无引号
+      #quote: "\0"  # 这是一个特殊技巧，用空字符表示无引号
 
     # 2. 中间文件 UTF-8 配置
     utf8-split:

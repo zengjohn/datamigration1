@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -79,7 +80,7 @@ public class TranscodeService {
         } catch (Exception e) {
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
             if (null != detail) {
-                log.error("转码失败, detail id: {}, 源文件: {}, detail.getId(), detail.getSourceCsvPath()", e);
+                log.error(">>> 转码失败, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath(), e);
                 detail.setStatus(DetailStatus.FAIL_TRANSCODE);
                 detail.setErrorMsg(e.getMessage());
                 detailRepo.save(detail);
@@ -102,8 +103,10 @@ public class TranscodeService {
         Charset ibmCharset = CharsetFactory.resolveCharset(ibmSource.getEncoding());
         // 【关键配置】使用非严格模式，允许方案B捕获替换字符
         boolean strictMode = false;
-        // 后续修改为从表定义文件获取
-        int expectedColumns = 0;
+
+        Qianyi findQianyiById = qianyiRepo.findById(qianyiId).orElse(null);
+        List<String> ddlFilePath = SchemaParseUtil.parseColumnNamesFromDdl(findQianyiById.getDdlFilePath());
+        int expectedColumns = ddlFilePath.size();
 
         // 【修改点 1】新增：创建 Encoder (用于新版验证) 和获取配置开关
         CharsetEncoder ibmEncoder = ibmCharset.newEncoder();
@@ -124,10 +127,11 @@ public class TranscodeService {
 
             String[] originalLine;
             long lineNo = 1; // 大机行号
+            long currentLineNoFromContext;
 
             // 初始化第一个 Writer
             int fileIndex = 1;
-            CsvWriter writer = null;
+            CsvWriterContext csvWriterContext = null;
             CsvWriter errorWriter = null; // 新增：错误文件 Writer
             Path currentOutPath = null;
             long currentFileRows = 0;
@@ -137,8 +141,11 @@ public class TranscodeService {
                 Files.createDirectories(Paths.get(config.getJob().getOutputDir()));
                 Files.createDirectories(Paths.get(config.getJob().getErrorDir()));
 
-                while ((originalLine = parser.parseNext()) != null) {
+                while (null != (originalLine = parser.parseNext())) {
+                    currentLineNoFromContext = parser.getContext().currentLine();
+
                     // 1. 关键：检查主单是否停止 (优雅停机)
+                    // 这里有严重的性能问题，在循环内部去查询数据库，考虑怎么样缓存!!!
                     boolean migrationJobActive = isMigrationJobActive(qianyiId);
                     if (!migrationJobActive) {
                         log.warn(">>> 迁移作业已停止，转码暂停: {}",detailId);
@@ -185,8 +192,12 @@ public class TranscodeService {
                             });
                         }
 
+                        if ((1 == lineNo) && (null != errorType)) {
+                            throwException(lineNo, errorType, originalLine, columnErrors, ibmCharset);
+                        }
+
                         // 调用封装好的错误写入逻辑
-                        writeErrorRecord(errorWriter, lineNo, errorType, originalLine, columnErrors, ibmCharset);
+                        writeErrorRecord(errorWriter, currentLineNoFromContext, errorType, originalLine, columnErrors, ibmCharset);
 
                         lineNo++;
                         continue; // 跳过正常写入
@@ -195,18 +206,19 @@ public class TranscodeService {
 
                     // --- 以下是正常的成功处理逻辑 ---
                     // 懒加载创建文件
-                    if (writer == null) {
+                    if (csvWriterContext == null) {
                         currentOutPath = Paths.get(config.getJob().getOutputDir(), detailId + "_" + fileIndex + ".csv");
-                        writer = createUtf8Writer(currentOutPath);
+                        csvWriterContext = createUtf8Writer(currentOutPath, currentLineNoFromContext);
                     }
 
-                    // 2. 注入行号 (放到第一列)
-                    String[] newRow = new String[rowToWrite.length + 2];
-                    newRow[0] = String.valueOf(detailId); // 明细id
-                    newRow[1] = String.valueOf(lineNo); // ia-ibm1388-lineno
-                    System.arraycopy(rowToWrite, 0, newRow, 1, rowToWrite.length);
+                    // 2. 注入行号 (放到最后一列)
+                    Object[] newRow = new Object[rowToWrite.length + 1];
+                    for(int i=0; i<rowToWrite.length; i++) {
+                        newRow[i] = rowToWrite[i];
+                    }
+                    newRow[rowToWrite.length] = currentLineNoFromContext; // ia-ibm1388-lineno
 
-                    writer.writeRow(newRow);
+                    csvWriterContext.csvWriter.writeRow(newRow);
                     currentFileRows++;
                     lineNo++;
 
@@ -219,22 +231,26 @@ public class TranscodeService {
 
                     // 3. 切分文件
                     if (currentFileRows >= perfConfig.getSplitRows()) {
-                        writer.close();
-                        writer = null;
+                        Long startLineNo = csvWriterContext.startLineNo;
+                        csvWriterContext.close();
+                        csvWriterContext = null;
                         fileIndex++;
                         // 保存切分记录到数据库
-                        saveSplit(detailId, currentOutPath, lineNo-1, currentFileRows);
+                        saveSplit(detailId, currentOutPath, startLineNo, currentFileRows);
                         currentFileRows = 0;
                     }
                 }
 
                 if (currentFileRows > 0) {
-                    writer.close();
+                    Long startLineNo = csvWriterContext.startLineNo;
+                    csvWriterContext.close();
                     // 保存切分记录到数据库
-                    saveSplit(detailId, currentOutPath, lineNo-1, currentFileRows);
+                    saveSplit(detailId, currentOutPath, startLineNo, currentFileRows);
                 }
             } finally {
-                if (writer != null) writer.close();
+                if (csvWriterContext != null) {
+                    csvWriterContext.close();
+                }
                 if (errorWriter != null) errorWriter.close(); // 别忘了关闭错误文件流
             }
         }
@@ -245,7 +261,7 @@ public class TranscodeService {
         return migraRepo.findActiveStatusById(qianyiById.getJobId());
     }
 
-    private CsvWriter createUtf8Writer(Path path) throws IOException {
+    private CsvWriterContext createUtf8Writer(Path path, Long startLineNo) throws IOException {
         AppProperties.Performance performance = config.getPerformance();
         AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
         CsvWriterSettings settings = utf8Split.toWriterSettings();
@@ -254,40 +270,69 @@ public class TranscodeService {
         Writer out = new BufferedWriter(new OutputStreamWriter(
                 Files.newOutputStream(path), Charset.forName(utf8Split.getEncoding())),
                 performance.getWriteBufferSize()); // 加大写缓冲
-        return new CsvWriter(out, settings);
+        return new CsvWriterContext(new CsvWriter(out, settings), startLineNo);
+    }
+
+    private class CsvWriterContext {
+        private CsvWriter csvWriter;
+        private Long startLineNo;
+        public CsvWriterContext(CsvWriter csvWriter, Long startLineNo) {
+            this.csvWriter = csvWriter;
+            this.startLineNo = startLineNo;
+        }
+        public void close() {
+            if (null != csvWriter) {
+                csvWriter.close();
+            }
+        }
+        public Long getStartLineNo() {
+            return this.startLineNo;
+        }
+        public void write(String[] newRow) {
+            this.write(newRow);
+        }
+    }
+
+    private void throwException(long lineNo, String errorType, String[] row, List<ColumnErrorDetail> colErrors, Charset ibmCharset) {
+        String[] errorInfo = formatErrorInfo(lineNo, errorType, row, colErrors, ibmCharset);
+        throw new RuntimeException(Arrays.stream(errorInfo).collect(Collectors.joining("\n")));
     }
 
     /**
      * 写入错误记录
      */
-    private void writeErrorRecord(CsvWriter errorWriter, long lineNo, String errorType,
-                                  String[] row, List<ColumnErrorDetail> colErrors, Charset ibmCharset) {
+    private void writeErrorRecord(CsvWriter errorWriter, long lineNo, String errorType, String[] row, List<ColumnErrorDetail> colErrors, Charset ibmCharset) {
+        try {
+            String[] errorInfo = formatErrorInfo(lineNo, errorType, row, colErrors, ibmCharset);
+            errorWriter.writeRow(errorInfo);
+        } catch (Exception e) {
+            log.error("写入错误日志失败 Line:{}", lineNo, e);
+        }
+    }
+
+    private String[] formatErrorInfo(long lineNo, String errorType, String[] row, List<ColumnErrorDetail> colErrors, Charset ibmCharset) {
         String rowBase64Ibm = "";
         String rowBase64Utf8 = "";
         String colDetailsJson = "";
 
-        try {
-            // 如果是行级错误（如列数不对），或者为了保留上下文，我们总是尝试计算整行的 Base64
-            // 注意：这里的 Row_Base64_IBM 是"尝试还原"的值，不是物理原始值
-            String rowString = toCsvString(row);
-            rowBase64Ibm = Base64.getEncoder().encodeToString(rowString.getBytes(ibmCharset));
-            rowBase64Utf8 = Base64.getEncoder().encodeToString(rowString.getBytes(StandardCharsets.UTF_8));
+        // 如果是行级错误（如列数不对），或者为了保留上下文，我们总是尝试计算整行的 Base64
+        // 注意：这里的 Row_Base64_IBM 是"尝试还原"的值，不是物理原始值
+        String rowString = toCsvString(row);
+        rowBase64Ibm = Base64.getEncoder().encodeToString(rowString.getBytes(ibmCharset));
+        rowBase64Utf8 = Base64.getEncoder().encodeToString(rowString.getBytes(StandardCharsets.UTF_8));
 
-            // 如果是列级错误，生成详细的 JSON
-            if (colErrors != null && !colErrors.isEmpty()) {
-                colDetailsJson = gson.toJson(colErrors);
-            }
-
-            errorWriter.writeRow(new String[]{
-                    String.valueOf(lineNo),
-                    errorType,
-                    rowBase64Ibm,
-                    rowBase64Utf8,
-                    colDetailsJson
-            });
-        } catch (Exception e) {
-            log.error("写入错误日志失败 Line:{}", lineNo, e);
+        // 如果是列级错误，生成详细的 JSON
+        if (colErrors != null && !colErrors.isEmpty()) {
+            colDetailsJson = gson.toJson(colErrors);
         }
+
+        return new String[]{
+                String.valueOf(lineNo),
+                errorType,
+                rowBase64Ibm,
+                rowBase64Utf8,
+                colDetailsJson
+        };
     }
 
     /**
