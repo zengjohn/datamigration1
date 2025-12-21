@@ -58,6 +58,7 @@ public class VerifyService {
         VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
 
         try {
+            // 2. 状态双重检查
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
             if (detail == null || detail.getStatus() != DetailStatus.WAIT_VERIFY) {
                 return;
@@ -113,7 +114,7 @@ public class VerifyService {
                 log.error("比对主流程异常", e);
             }
         } finally {
-            // 2. 【出门解锁】
+            // 7. 【出门解锁】
             lockManager.releaseLock(detailId);
         }
     }
@@ -177,7 +178,6 @@ public class VerifyService {
     private CloseableRowIterator createFileIterator(CsvSplit split, VerifyStrategy strategy) throws Exception {
         if (strategy == VerifyStrategy.USE_SOURCE_FILE) {
             // 策略 B: 读源文件 IBM1388 + Skip
-            // 假设 detail 里能取到 sourceFilePath
             QianyiDetail detailById = detailRepo.findById(split.getDetailId()).orElse(null);
             String sourcePath = detailById.getSourceCsvPath();
 
@@ -191,16 +191,15 @@ public class VerifyService {
             CsvParser csvParser = new CsvParser(settings);
             // 配置读取限制
             // 读取源文件：偏移量通常是 0 (因为 context.currentLine() 就是真实行号)
-            return new CsvRowIterator(sourcePath, false, csvParser, CharsetFactory.resolveCharset(ibmSource.getEncoding()), 0);
+            return new CsvRowIterator(sourcePath, false, csvParser,
+                    CharsetFactory.resolveCharset(ibmSource.getEncoding()), 0);
         } else {
             AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
             CsvParserSettings settings = utf8Split.toParserSettings();
             CsvParser csvParser = new CsvParser(settings);
             // 读取拆分文件 (UTF-8)：
-            // 情况 A: 拆分文件里第一行就是原文件的第 10001 行的数据
-            // 此时 context.currentLine() = 1，我们需要它变成 10001
-            // 所以 offset = split.getStartRowNo() - 1
-            return new CsvRowIterator(split.getSplitFilePath(), true, csvParser, CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
+            return new CsvRowIterator(split.getSplitFilePath(), true, csvParser,
+                    CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
         }
     }
 

@@ -3,6 +3,11 @@ package com.example.moveprog.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+
 @Slf4j
 @Component
 public class CoreComparator {
@@ -68,4 +73,95 @@ public class CoreComparator {
             }
         }
     }
+
+    // 有时间时在将下面的按类型比对合并进来
+
+    /**
+     * 单个单元格比对逻辑
+     * @param dbStr 数据库取出的值 (通常已经通过 ResultSet.getString 转好了)
+     * @param fileStr CSV文件里的值
+     * @param sqlType java.sql.Types 的类型
+     */
+    protected boolean isCellEqual(String dbStr, String fileStr, int sqlType) {
+        String val1 = (dbStr == null) ? "" : dbStr.trim();
+        String val2 = (fileStr == null) ? "" : fileStr.trim();
+
+        if (val1.equals(val2)) return true;
+        if (val1.isEmpty() && val2.isEmpty()) return true;
+
+        switch (sqlType) {
+            case java.sql.Types.TIMESTAMP:
+            case java.sql.Types.TIME:
+                return compareTimestamp(val1, val2);
+
+            case java.sql.Types.NUMERIC:
+            case java.sql.Types.DECIMAL:
+            case java.sql.Types.DOUBLE:
+                return compareNumber(val1, val2);
+
+            default:
+                return false;
+        }
+    }
+
+    // 定义多种可能的时间格式，用于解析 CSV 字符串
+    // 这种带 [.SSSSSS] 的写法是关键，可选匹配微秒
+    private static final DateTimeFormatter[] DATE_FORMATS = {
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSSSSS") // 兼容斜杠
+    };
+
+    /**
+     * 【核心】高精度时间比对
+     * 解决：
+     * 1. DB: 2023-01-01 10:00:00.000000 vs CSV: 2023-01-01 10:00:00 (缺省)
+     * 2. DB: 2023-01-01 10:00:00.123456 vs CSV: 2023-01-01 10:00:00.123456
+     */
+    private boolean compareTimestamp(String v1, String v2) {
+        try {
+            Timestamp t1 = parseTimestamp(v1);
+            Timestamp t2 = parseTimestamp(v2);
+
+            // 使用 compareTo == 0 来比较，能够正确处理 nanos
+            return t1.compareTo(t2) == 0;
+
+        } catch (Exception e) {
+            // 如果解析失败，说明格式严重不符，直接返回 false
+            // 或者 log.warn("时间格式解析失败: {} vs {}", v1, v2);
+            return false;
+        }
+    }
+
+    private Timestamp parseTimestamp(String val) {
+        // 1. 尝试直接用 Timestamp.valueOf (格式必须是 yyyy-mm-dd hh:mm:ss[.f...])
+        try {
+            return Timestamp.valueOf(val);
+        } catch (IllegalArgumentException e) {
+            // 忽略，继续尝试
+        }
+
+        // 2. 尝试手动归一化 (补全微秒)
+        // 有时候 DB 返回 .0 而 CSV 没有，或者反之
+        // 最暴力的办法：都转成纳秒级对比，或者利用 DateTimeFormatter
+        for (DateTimeFormatter fmt : DATE_FORMATS) {
+            try {
+                // 如果是 LocalDateTime 转换
+                java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(val, fmt);
+                return Timestamp.valueOf(ldt);
+            } catch (DateTimeParseException ignored) {}
+        }
+
+        throw new RuntimeException("Unparseable date: " + val);
+    }
+
+    private boolean compareNumber(String v1, String v2) {
+        try {
+            return new BigDecimal(v1).compareTo(new BigDecimal(v2)) == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
 }
