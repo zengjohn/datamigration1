@@ -7,6 +7,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+/**
+ * 应用配置
+ */
 @Data
 @Component
 @ConfigurationProperties(prefix = "app") // 对应 application.yml 中的 app:

@@ -31,4 +31,17 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
      * 用途: MigrationDispatcher 检查批次是否完成 (countBy...StatusNot(id, "PASS") == 0 则代表全完成了)
      */
     long countByQianyiIdAndStatusNot(Long qianyiId, DetailStatus status);
+
+    /**
+     * 查询状态为指定值的前5条记录
+     * findTop5ByStatus：按规则推导SQL
+     * - findTop5：取前5条
+     * - ByStatus：按status字段过滤
+     * @param status 状态枚举
+     * @return 前5条符合条件的记录
+     */
+    List<QianyiDetail> findTop5ByStatus(DetailStatus status);
+
+    List<QianyiDetail> findByJobId(Long jobId);
+
 }

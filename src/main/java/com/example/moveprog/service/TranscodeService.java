@@ -20,7 +20,6 @@ import com.univocity.parsers.csv.CsvWriterSettings;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -33,31 +32,29 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * 转码服务
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class TranscodeService {
+    private final StateManager stateManager;
+
     private final MigrationJobRepository migraRepo;
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
 
-    private final TaskLockManager lockManager;
-    
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
 
     private final Gson gson = new Gson();
 
-    @Async("taskExecutor") // 使用通用线程池, 关键：异步执行，否则调度器会卡死在这里等待文件转完
+    // 去掉了 @Async，去掉了锁，纯同步逻辑。
     public void execute(Long detailId) {
-        // 1. 【进门加锁】
-        if (!lockManager.tryLock(detailId)) {
-            if (log.isDebugEnabled()) {
-                log.debug("转码任务正在运行中，跳过: {}", detailId);
-            }
-            return;
-        }
+        log.info(">>> 开始转码 Detail: {}", detailId);
+        stateManager.updateDetailStatus(detailId, DetailStatus.TRANSCODING);
 
         try {
             // 2. 【状态双重检查】(推荐)
@@ -68,30 +65,13 @@ public class TranscodeService {
             }
             log.info(">>> 开始转码, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
 
-            // 3. 更新状态
-            detail.setStatus(DetailStatus.TRANSCODING);
-            detailRepo.save(detail);
-
             transcodeSingleSourceFile(detail.getQianyiId(), detail.getId(), detail.getSourceCsvPath());
 
-            // 完成
-            detail.setStatus(DetailStatus.WAIT_LOAD);
-            detail.setProgress(100);
-            detailRepo.save(detail);
-            log.info(">>> 转码成功, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
+            // 转码完成，进入"子任务处理中"状态
+            stateManager.updateDetailStatus(detailId, DetailStatus.PROCESSING_CHILDS);
+            log.info("<<< 转码完成 Detail: {}", detailId);
         } catch (Exception e) {
-            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-            if (null != detail) {
-                log.error(">>> 转码失败, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath(), e);
-                detail.setStatus(DetailStatus.FAIL_TRANSCODE);
-                detail.setErrorMsg(e.getMessage());
-                detailRepo.save(detail);
-            } else {
-                log.error("转码失败", e);
-            }
-        } finally {
-            // 3. 【出门解锁】
-            lockManager.releaseLock(detailId);
+            stateManager.updateDetailStatus(detailId, DetailStatus.FAIL_TRANSCODE);
         }
     }
 
@@ -145,15 +125,6 @@ public class TranscodeService {
 
                 while (null != (originalLine = parser.parseNext())) {
                     currentLineNoFromContext = parser.getContext().currentLine();
-
-                    // 1. 关键：检查主单是否停止 (优雅停机)
-                    // 这里有严重的性能问题，在循环内部去查询数据库，考虑怎么样缓存!!!
-                    boolean migrationJobActive = isMigrationJobActive(qianyiId);
-                    if (!migrationJobActive) {
-                        log.warn(">>> 迁移作业已停止，转码暂停: {}",detailId);
-                        // 可以在这里保存断点行号
-                        return; // 退出，finally块会释放锁
-                    }
 
                     // 1. 准备要写入的数据对象 (默认就是原始数据)
                     String[] rowToWrite = originalLine;
@@ -238,7 +209,7 @@ public class TranscodeService {
                         csvWriterContext = null;
                         fileIndex++;
                         // 保存切分记录到数据库
-                        saveSplit(detailId, currentOutPath, startLineNo, currentFileRows);
+                        saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, currentFileRows);
                         currentFileRows = 0;
                     }
                 }
@@ -247,7 +218,7 @@ public class TranscodeService {
                     Long startLineNo = csvWriterContext.startLineNo;
                     csvWriterContext.close();
                     // 保存切分记录到数据库
-                    saveSplit(detailId, currentOutPath, startLineNo, currentFileRows);
+                    saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, currentFileRows);
                 }
             } finally {
                 if (csvWriterContext != null) {
@@ -256,11 +227,6 @@ public class TranscodeService {
                 if (errorWriter != null) errorWriter.close(); // 别忘了关闭错误文件流
             }
         }
-    }
-
-    private boolean isMigrationJobActive(Long qianyiId) {
-        Qianyi qianyiById = qianyiRepo.findById(qianyiId).orElse(null);
-        return migraRepo.findActiveStatusById(qianyiById.getJobId());
     }
 
     private CsvWriterContext createUtf8Writer(Path path, Long startLineNo) throws IOException {
@@ -454,8 +420,10 @@ public class TranscodeService {
         }
     }
 
-    private void saveSplit(Long detailId, Path path, Long startLineNo, Long rowCount) {
+    private void saveSplit(Long jobId, Long qianyiId, Long detailId, Path path, Long startLineNo, Long rowCount) {
         CsvSplit split = new CsvSplit();
+        split.setJobId(jobId);
+        split.setQianyiId(qianyiId);
         split.setDetailId(detailId);
         split.setSplitFilePath(path.toString());
         split.setStartRowNo(startLineNo);

@@ -33,11 +33,11 @@ public class DirectoryMonitor {
     @Scheduled(fixedDelay = 5000)
     public void scan() {
         // 1. 查找所有启用的 Job
-        List<MigrationJob> jobs = jobRepo.findByActiveTrue();
+        List<MigrationJob> jobs = jobRepo.findAll();
 
         for (MigrationJob job : jobs) {
             try {
-                File dir = new File(job.getSourceDir());
+                File dir = new File(job.getSourceDirectory());
                 File[] okFiles = dir.listFiles((d, name) -> name.endsWith(".ok"));
                 if (okFiles == null) continue;
 
@@ -45,7 +45,7 @@ public class DirectoryMonitor {
                     processOkFile(job, okFile);
                 }
             } catch (Exception e) {
-                log.error("扫描Job[{}]异常", job.getJobName(), e);
+                log.error("扫描Job[{}]异常", job.getName(), e);
             }
         }
     }
@@ -76,6 +76,7 @@ public class DirectoryMonitor {
             if (content.csv != null) {
                 for (String csvPath : content.csv) {
                     QianyiDetail detail = new QianyiDetail();
+                    detail.setJobId(qianyi.getJobId());
                     detail.setQianyiId(qianyi.getId());
                     detail.setTableName(tableName);
                     detail.setSourceCsvPath(csvPath);

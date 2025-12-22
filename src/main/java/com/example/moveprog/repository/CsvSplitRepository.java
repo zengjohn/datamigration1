@@ -28,4 +28,9 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
      * 用途: 如果需要重置整个转码过程，可能需要先清理旧的切分记录
      */
     void deleteByDetailId(Long detailId);
+
+    List<CsvSplit> findTop20ByStatus(CsvSplitStatus status);
+
+    List<CsvSplit> findByJobId(Long jobId);
+
 }

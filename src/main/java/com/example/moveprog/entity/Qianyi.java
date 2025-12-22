@@ -5,6 +5,11 @@ import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
 
+/**
+ * 对应一个ok文件
+ *   1. 对应一个Qianyi
+ *   2. 包括一个schema定义文件路径(schema文件名就是表名)，一个或者多个待处理的IBM1388 csv文件路径
+ */
 @Entity
 @Data
 @Table(name = "qianyi")
@@ -13,11 +18,29 @@ public class Qianyi {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long jobId;         // 关联哪个配置
-    private String tableName;   // 从 DDL 路径解析出的表名
-    private String okFilePath;  // 触发文件路径
-    private String ddlFilePath; // DDL路径
+    /**
+     * 关联哪个配置
+     * 相当于MigrationJob表id的外键引用
+     */
+    @Column(name = "job_id")
+    private Long jobId;
 
+    /**
+     * OK文件路径
+     */
+    private String okFilePath;
+    /**
+     * 目标端表名 （目前的设计，要求一个ok文件中所有的csv文件都装载到同一张表)
+     */
+    private String tableName;
+    /**
+     * schema文件路径
+     */
+    private String ddlFilePath;
+
+    /**
+     * 状态
+     */
     @Enumerated(EnumType.STRING)
     private BatchStatus status;
 

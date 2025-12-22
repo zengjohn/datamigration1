@@ -2,229 +2,322 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>Qianyi Migration Console</title>
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据迁移运维控制台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; background: #f0f2f5; }
-        .header { background: #fff; padding: 0 20px; height: 60px; display: flex; align-items: center; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
-        .header h2 { margin: 0; font-size: 18px; color: #303133; }
-        .main-container { padding: 20px; max-width: 1400px; margin: 0 auto; }
-        .nav-breadcrumb { margin-bottom: 20px; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; }
-        .status-tag { font-weight: bold; }
+        body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; margin-bottom: 20px; }
+        .card-header { font-weight: 600; }
+        .cursor-pointer { cursor: pointer; }
+        .hover-row:hover { background-color: #e9ecef !important; }
+        .selected-row { background-color: #e2e6ea; border-left: 4px solid #0d6efd; }
+        /* 遮罩层样式 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1050;
+        }
+        /* 弹窗大小控制 */
+        .modal-card-lg { width: 90%; max-width: 1200px; max-height: 90vh; display: flex; flex-direction: column; }
+        .modal-card-sm { width: 90%; max-width: 600px; background: white; border-radius: 8px; overflow: hidden;}
+        .modal-body-scroll { overflow-y: auto; }
     </style>
 </head>
 <body>
-<div id="app">
-    <div class="header">
-        <h2>🚀 数据迁移控制台 (New Architecture)</h2>
-    </div>
 
-    <div class="main-container">
-        <el-breadcrumb separator="/" class="nav-breadcrumb">
-            <el-breadcrumb-item><a @click="goHome">作业列表 (Jobs)</a></el-breadcrumb-item>
-            <el-breadcrumb-item v-if="currentBatch">批次列表 (Table: {{currentBatch.tableName}})</el-breadcrumb-item>
-            <el-breadcrumb-item v-if="currentDetail">源文件任务 (Source: {{currentDetail.sourceCsvPath}})</el-breadcrumb-item>
-        </el-breadcrumb>
+<div id="app" class="container-fluid p-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3>🚀 数据迁移运维控制台</h3>
+        <div>
+            <button class="btn btn-primary me-3" @click="openCreateModal">
+                + 新建迁移作业
+            </button>
 
-        <div v-if="viewState === 'JOB'">
-            <el-card>
-                <template #header><div class="card-header"><span>作业配置</span><el-button type="primary" @click="openJobDialog">新建作业</el-button></div></template>
-                <el-table :data="jobList" border stripe>
-                    <el-table-column prop="id" label="ID" width="60"></el-table-column>
-                    <el-table-column prop="jobName" label="作业名称"></el-table-column>
-                    <el-table-column prop="sourceDir" label="监控目录"></el-table-column>
-                    <el-table-column label="状态" width="100">
-                        <template #default="{row}">
-                            <el-tag :type="row.active ? 'success' : 'info'">{{ row.active ? '运行中' : '暂停' }}</el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="操作">
-                        <template #default="{row}">
-                            <el-button size="small" @click="toggleJob(row)">{{ row.active ? '暂停' : '启动' }}</el-button>
-                            <el-button size="small" type="primary" @click="enterJob(row)">查看批次</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </el-card>
-        </div>
-
-        <div v-if="viewState === 'BATCH'">
-            <el-card>
-                <template #header><div class="card-header"><span>批次列表 (Job: {{currentJob.jobName}})</span><el-button @click="goHome">返回</el-button></div></template>
-                <el-table :data="batchList" border stripe>
-                    <el-table-column prop="id" label="批次ID" width="80"></el-table-column>
-                    <el-table-column prop="tableName" label="表名"></el-table-column>
-                    <el-table-column prop="okFilePath" label="触发文件"></el-table-column>
-                    <el-table-column prop="status" label="状态">
-                        <template #default="{row}">
-                            <el-tag :type="row.status === 'FINISHED' ? 'success' : 'warning'">{{ row.status }}</el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="createTime" label="触发时间"></el-table-column>
-                    <el-table-column label="操作">
-                        <template #default="{row}">
-                            <el-button size="small" type="primary" @click="enterBatch(row)">查看明细</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </el-card>
-        </div>
-
-        <div v-if="viewState === 'DETAIL'">
-            <el-card>
-                <template #header><div class="card-header"><span>源文件任务 (Table: {{currentBatch.tableName}})</span><el-button @click="backToBatch">返回</el-button></div></template>
-                <el-table :data="detailList" border stripe>
-                    <el-table-column prop="id" label="任务ID" width="80"></el-table-column>
-                    <el-table-column prop="sourceCsvPath" label="源CSV文件" show-overflow-tooltip></el-table-column>
-                    <el-table-column label="阶段" width="120">
-                        <template #default="{row}">
-                            <el-tag effect="dark" :type="getStatusType(row.status)">{{ row.status }}</el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="errorMsg" label="错误信息" show-overflow-tooltip></el-table-column>
-                    <el-table-column label="操作" width="300">
-                        <template #default="{row}">
-                            <el-popover placement="left" :width="600" trigger="click" @show="loadSplits(row.id)">
-                                <template #reference>
-                                    <el-button size="small">查看切分 (Splits)</el-button>
-                                </template>
-                                <el-table :data="splitsMap[row.id]" size="small" border>
-                                    <el-table-column prop="splitFilePath" label="切分文件"></el-table-column>
-                                    <el-table-column prop="rowCount" label="行数" width="80"></el-table-column>
-                                    <el-table-column prop="status" label="状态" width="80">
-                                        <template #default="scope">
-                                            <span :style="{color: scope.row.status==='PASS'?'green':'red'}">{{ scope.row.status }}</span>
-                                        </template>
-                                    </el-table-column>
-                                </el-table>
-                            </el-popover>
-
-                            <el-button v-if="row.status.includes('FAIL')" size="small" type="danger" @click="retryDetail(row.id, 'TRANSCODE')">重试转码</el-button>
-                            <el-button v-if="row.status === 'WAIT_RELOAD'" size="small" type="warning" @click="retryDetail(row.id, 'LOAD')">断点续传</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </el-card>
+            <span class="text-muted small me-2">自动刷新: {{ autoRefresh ? '开启' : '关闭' }}</span>
+            <button class="btn btn-outline-secondary btn-sm" @click="toggleAutoRefresh">
+                {{ autoRefresh ? '⏸ 暂停' : '▶ 开启' }}
+            </button>
         </div>
     </div>
 
-    <el-dialog v-model="showJobDialog" title="新建作业">
-        <el-form :model="jobForm">
-            <el-form-item label="名称"><el-input v-model="jobForm.jobName"></el-input></el-form-item>
-            <el-form-item label="监控目录"><el-input v-model="jobForm.sourceDir"></el-input></el-form-item>
-            <el-form-item label="目标数据库 URL"><el-input v-model="jobForm.targetJdbcUrl"></el-input></el-form-item>
-            <el-form-item label="数据库用户名"><el-input v-model="jobForm.targetUser" placeholder="root"></el-input></el-form-item>
-            <el-form-item label="数据库密码"><el-input v-model="jobForm.targetPassword" placeholder="password"></el-input></el-form-item>
-        </el-form>
-        <template #footer><el-button type="primary" @click="submitJob">保存</el-button></template>
-    </el-dialog>
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-white text-primary">1. 迁移作业列表</div>
+                <div class="card-body p-0">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                        <tr><th>名称</th><th>监控目录</th><th>状态</th><th>操作</th></tr>
+                        </thead>
+                        <tbody>
+                        <tr v-for="job in jobs" :key="job.id"
+                            @click="selectJob(job)"
+                            class="cursor-pointer hover-row"
+                            :class="{ 'selected-row': selectedJob?.id === job.id }">
+                            <td>
+                                <div class="fw-bold">{{ job.name }}</div>
+                                <div class="small text-muted">ID: {{ job.id }}</div>
+                            </td>
+                            <td class="small text-muted" style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="job.sourceDirectory">
+                                {{ job.sourceDirectory }}
+                            </td>
+                            <td><span :class="getStatusClass(job.status)">{{ job.status }}</span></td>
+                            <td>
+                                <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')" class="btn btn-danger btn-sm py-0">停止</button>
+                                <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')" class="btn btn-success btn-sm py-0">恢复</button>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="card h-100">
+                <div class="card-header bg-white text-success d-flex justify-content-between">
+                    <span>2. 文件处理明细 <span v-if="selectedJob">- {{ selectedJob.name }}</span></span>
+                    <button v-if="selectedJob" class="btn btn-sm btn-light" @click="fetchDetails(selectedJob.id)">🔄</button>
+                </div>
+                <div class="card-body p-0" v-if="selectedJob">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                        <tr><th>ID</th><th>源文件名</th><th>状态</th><th>更新时间</th><th>操作</th></tr>
+                        </thead>
+                        <tbody>
+                        <tr v-for="d in details" :key="d.id">
+                            <td>{{ d.id }}</td>
+                            <td>{{ d.fileName }}</td>
+                            <td><span :class="getStatusClass(d.status)">{{ d.status }}</span></td>
+                            <td class="small text-muted">{{ formatTime(d.updateTime) }}</td>
+                            <td>
+                                <button @click="openSplits(d)" class="btn btn-outline-primary btn-sm">查看切片</button>
+                            </td>
+                        </tr>
+                        <tr v-if="details.length === 0"><td colspan="5" class="text-center text-muted p-3">暂无文件</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-body text-center text-muted p-5" v-else>👈 请选择一个作业</div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showCreateJobModal" class="modal-overlay" @click.self="showCreateJobModal = false">
+        <div class="modal-card-sm p-4">
+            <h4 class="mb-3">✨ 新建迁移作业</h4>
+            <form @submit.prevent="submitCreateJob">
+                <div class="mb-3">
+                    <label class="form-label">作业名称</label>
+                    <input v-model="newJob.name" type="text" class="form-control" placeholder="例如：2023年财务数据归档" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">监控源目录 (Source Directory)</label>
+                    <input v-model="newJob.sourceDirectory" type="text" class="form-control" placeholder="/data/incoming/csv_files" required>
+                    <div class="form-text">系统将自动扫描该目录下的 .csv 文件</div>
+                </div>
+
+                <hr>
+                <h6 class="text-muted">目标数据库配置 (Target DB)</h6>
+
+                <div class="mb-2">
+                    <label class="form-label small">JDBC URL</label>
+                    <input v-model="newJob.targetDbUrl" type="text" class="form-control form-control-sm" placeholder="jdbc:mysql://192.168.1.10:3306/target_db">
+                </div>
+                <div class="row mb-3">
+                    <div class="col">
+                        <label class="form-label small">用户名</label>
+                        <input v-model="newJob.targetDbUser" type="text" class="form-control form-control-sm" placeholder="root">
+                    </div>
+                    <div class="col">
+                        <label class="form-label small">密码</label>
+                        <input v-model="newJob.targetDbPass" type="password" class="form-control form-control-sm">
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-secondary" @click="showCreateJobModal = false">取消</button>
+                    <button type="submit" class="btn btn-primary">立即创建并启动</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div v-if="showSplitModal" class="modal-overlay" @click.self="closeSplits">
+        <div class="card modal-card-lg">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">切片监控 - {{ selectedDetail?.fileName }}</h5>
+                <button class="btn-close" @click="closeSplits"></button>
+            </div>
+            <div class="card-body modal-body-scroll p-0">
+                <table class="table table-striped mb-0">
+                    <thead class="table-light sticky-top">
+                    <tr><th>ID</th><th>切片名</th><th>状态</th><th>错误信息</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="s in splits" :key="s.id">
+                        <td>{{ s.id }}</td>
+                        <td>{{ s.splitFileName }}</td>
+                        <td><span :class="getStatusClass(s.status)">{{ s.status }}</span></td>
+                        <td class="text-danger small">{{ s.errorMsg }}</td>
+                        <td>
+                            <button v-if="canRetry(s.status)" @click="retrySplit(s)" class="btn btn-warning btn-sm">♻️ 重试</button>
+                            <span v-else-if="s.status === 'PASS'" class="text-success small">✔</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 
-<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-<script src="https://unpkg.com/element-plus"></script>
-<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
-
 <script>
-    const { createApp, ref, onMounted } = Vue;
+    const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
+    const API_BASE = 'http://localhost:8080/api/migration';
+
     createApp({
         setup() {
-            const viewState = ref('JOB'); // JOB, BATCH, DETAIL
-            const currentJob = ref(null);
-            const currentBatch = ref(null);
-            const currentDetail = ref(null);
+            // 数据源
+            const jobs = ref([]);
+            const details = ref([]);
+            const splits = ref([]);
 
-            const jobList = ref([]);
-            const batchList = ref([]);
-            const detailList = ref([]);
-            const splitsMap = ref({}); // 缓存 split 数据
+            // 选中状态
+            const selectedJob = ref(null);
+            const selectedDetail = ref(null);
 
-            const showJobDialog = ref(false);
-            const jobForm = ref({});
+            // Modal 开关
+            const showSplitModal = ref(false);
+            const showCreateJobModal = ref(false);
 
-            // Loaders
-            const loadJobs = async () => {
-                const res = await axios.get('/api/job/list');
-                jobList.value = res.data;
+            // 新建作业表单数据
+            const newJob = reactive({
+                name: '',
+                sourceDirectory: '',
+                targetDbUrl: 'jdbc:mysql://localhost:3306/mydb',
+                targetDbUser: 'root',
+                targetDbPass: ''
+            });
+
+            // 自动刷新逻辑
+            const autoRefresh = ref(true);
+            let timer = null;
+
+            // --- API 方法 ---
+            const fetchJobs = async () => {
+                try {
+                    const res = await axios.get(`${API_BASE}/jobs`);
+                    jobs.value = res.data;
+                } catch(e) { console.error(e); }
             };
 
-            const loadBatches = async (jobId) => {
-                const res = await axios.get(`/api/batch/list?jobId=${jobId}`);
-                batchList.value = res.data;
+            const fetchDetails = async (jobId) => {
+                try {
+                    const res = await axios.get(`${API_BASE}/job/${jobId}/details`);
+                    details.value = res.data;
+                } catch(e) { console.error(e); }
             };
 
-            const loadDetails = async (batchId) => {
-                const res = await axios.get(`/api/detail/list?batchId=${batchId}`);
-                detailList.value = res.data;
+            const fetchSplits = async (detailId) => {
+                try {
+                    const res = await axios.get(`${API_BASE}/detail/${detailId}/splits`);
+                    splits.value = res.data;
+                } catch(e) { console.error(e); }
             };
 
-            const loadSplits = async (detailId) => {
-                const res = await axios.get(`/api/split/list?detailId=${detailId}`);
-                splitsMap.value[detailId] = res.data;
+            // --- 交互动作 ---
+
+            // 1. 新建作业
+            const openCreateModal = () => {
+                // 重置表单或保持默认值
+                newJob.name = '';
+                newJob.sourceDirectory = '';
+                showCreateJobModal.value = true;
             };
 
-            // Actions
-            const enterJob = (job) => {
-                currentJob.value = job;
-                viewState.value = 'BATCH';
-                loadBatches(job.id);
-            };
-
-            const enterBatch = (batch) => {
-                currentBatch.value = batch;
-                viewState.value = 'DETAIL';
-                loadDetails(batch.id);
-            };
-
-            const goHome = () => { viewState.value = 'JOB'; currentJob.value = null; loadJobs(); };
-            const backToBatch = () => { viewState.value = 'BATCH'; currentBatch.value = null; };
-
-            const toggleJob = async (row) => {
-                await axios.post(`/api/job/toggle/${row.id}`);
-                loadJobs();
-            };
-
-            const submitJob = async () => {
-                jobForm.value.active = true;
-                await axios.post('/api/job/save', jobForm.value);
-                showJobDialog.value = false;
-                loadJobs();
-            };
-
-            const retryDetail = async (id, type) => {
-                await axios.post(`/api/detail/retry/${id}?type=${type}`);
-                ElementPlus.ElMessage.success('指令已发送');
-                loadDetails(currentBatch.value.id);
-            };
-
-            const getStatusType = (status) => {
-                if (status === 'PASS' || status === 'FINISHED') return 'success';
-                if (status === 'NEW') return 'info';
-                if (status.includes('FAIL')) return 'danger';
-                return 'primary'; // PROCESSING, LOADING...
-            };
-
-            // Auto Refresh simple logic
-            setInterval(() => {
-                if (viewState.value === 'DETAIL' && currentBatch.value) {
-                    loadDetails(currentBatch.value.id);
-                } else if (viewState.value === 'BATCH' && currentJob.value) {
-                    loadBatches(currentJob.value.id);
+            const submitCreateJob = async () => {
+                try {
+                    await axios.post(`${API_BASE}/job/create`, newJob);
+                    alert("创建成功！");
+                    showCreateJobModal.value = false;
+                    fetchJobs(); // 刷新列表
+                } catch (e) {
+                    alert("创建失败: " + (e.response?.data || e.message));
                 }
-            }, 3000);
+            };
 
-            onMounted(() => loadJobs());
+            // 2. 选择作业
+            const selectJob = (job) => {
+                selectedJob.value = job;
+                details.value = [];
+                fetchDetails(job.id);
+            };
+
+            // 3. 打开切片
+            const openSplits = (detail) => {
+                selectedDetail.value = detail;
+                showSplitModal.value = true;
+                fetchSplits(detail.id);
+            };
+
+            const closeSplits = () => showSplitModal.value = false;
+
+            // 4. 停止/恢复
+            const jobAction = async (job, action) => {
+                if(!confirm(`确认 ${action} ?`)) return;
+                await axios.post(`${API_BASE}/job/${job.id}/action?action=${action}`);
+                fetchJobs();
+            };
+
+            // 5. 重试切片
+            const retrySplit = async (split) => {
+                await axios.post(`${API_BASE}/split/${split.id}/retry`);
+                split.status = 'WAIT_LOAD'; // 乐观更新
+            };
+
+            // --- 工具 ---
+            const toggleAutoRefresh = () => autoRefresh.value = !autoRefresh.value;
+            const canRetry = (s) => ['FAIL_LOAD', 'FAIL_VERIFY', 'FAIL_TRANSCODE'].includes(s);
+            const formatTime = (t) => t ? t.replace('T', ' ').substring(0, 19) : '';
+            const getStatusClass = (s) => {
+                const map = {
+                    'ACTIVE': 'badge bg-primary', 'STOPPED': 'badge bg-secondary',
+                    'NEW': 'badge bg-secondary', 'TRANSCODING': 'badge bg-warning text-dark',
+                    'PROCESSING_CHILDS': 'badge bg-primary', 'FINISHED': 'badge bg-success',
+                    'FINISHED_WITH_ERROR': 'badge bg-danger', 'WAIT_LOAD': 'badge bg-secondary',
+                    'LOADING': 'badge bg-info text-dark', 'FAIL_LOAD': 'badge bg-danger',
+                    'WAIT_VERIFY': 'badge bg-warning text-dark', 'PASS': 'badge bg-success',
+                    'FAIL_VERIFY': 'badge bg-danger'
+                };
+                return map[s] || 'badge bg-light text-dark';
+            };
+
+            // --- 生命周期 ---
+            onMounted(() => {
+                fetchJobs();
+                timer = setInterval(() => {
+                    if(autoRefresh.value) {
+                        fetchJobs();
+                        if(selectedJob.value) fetchDetails(selectedJob.value.id);
+                        if(showSplitModal.value && selectedDetail.value) fetchSplits(selectedDetail.value.id);
+                    }
+                }, 3000);
+            });
+
+            onUnmounted(() => clearInterval(timer));
 
             return {
-                viewState, jobList, batchList, detailList, splitsMap,
-                currentJob, currentBatch, currentDetail,
-                showJobDialog, jobForm,
-                enterJob, enterBatch, goHome, backToBatch,
-                toggleJob, openJobDialog: () => showJobDialog.value = true, submitJob,
-                loadSplits, retryDetail, getStatusType
+                jobs, details, splits, selectedJob, selectedDetail,
+                showSplitModal, showCreateJobModal, newJob, autoRefresh,
+                fetchDetails, openCreateModal, submitCreateJob, selectJob,
+                openSplits, closeSplits, jobAction, retrySplit, toggleAutoRefresh,
+                canRetry, formatTime, getStatusClass
             };
         }
-    }).use(ElementPlus).mount('#app');
+    }).mount('#app');
 </script>
 </body>
 </html>

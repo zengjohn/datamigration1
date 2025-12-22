@@ -28,19 +28,11 @@ public class JobService {
     @Transactional
     public MigrationJob createOrUpdateJob(MigrationJob job) {
         // 简单校验目录是否存在
-        File dir = new File(job.getSourceDir());
+        File dir = new File(job.getSourceDirectory());
         if (!dir.exists()) {
             dir.mkdirs(); // 或者抛错，看需求
         }
         return jobRepo.save(job);
-    }
-
-    @Transactional
-    public void toggleActive(Long id) {
-        MigrationJob job = getJob(id);
-        job.setActive(!job.isActive());
-        jobRepo.save(job);
-        log.info("作业[{}] 状态更新为: {}", job.getJobName(), job.isActive());
     }
 
     @Transactional

@@ -3,7 +3,6 @@ package com.example.moveprog.service;
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
-import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.enums.VerifyStrategy;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.service.impl.CsvRowIterator;
@@ -13,127 +12,66 @@ import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
+/**
+ * 校验服务
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class VerifyService {
+    private final StateManager stateManager;
 
     private final MigrationJobRepository jobRepo;
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
 
-    private final TaskLockManager lockManager;
-
     private final CoreComparator coreComparator; // 注入上一轮写的比对器
-    // 注入刚才配置的专用线程池(使用 Verify 专用线程池)
-    @Qualifier("verifyExecutor")
-    private final Executor verifyExecutor;
 
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
 
-    /**
-     * 执行比对的主入口
-     * @param detailId 明细ID
-     */
-    @Async("taskExecutor") // 外层异步，避免阻塞 Controller
-    public void execute(Long detailId) {
-        // 1. 【进门加锁】
-        if (!lockManager.tryLock(detailId)) {
-            if (log.isDebugEnabled()) {
-                log.debug("校验任务正在运行中，跳过: {}", detailId);
-            }
-            return;
-        }
-
-        VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
+    public void execute(Long splitId) {
+        // 1. 抢占任务
+        if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.VERIFYING, null)) return;
 
         try {
-            // 2. 状态双重检查
-            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-            if (detail == null || detail.getStatus() != DetailStatus.WAIT_VERIFY) {
-                return;
-            }
-            // 查询所以未成功的明细
-            long notPassCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
-            if (0 == notPassCount) {
-                log.info("detail id: {} , 源文件: {} 没有需要比对的分片", detail.getId(), detail.getSourceCsvPath());
-                markDetailSuccess(detail);
-                return;
-            }
+            VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
+            log.info("    [Verify] 开始校验 Split: {}", splitId);
 
             // 2. 准备基础数据
-            Qianyi batch = qianyiRepo.findById(detail.getQianyiId()).orElseThrow();
-            MigrationJob job = jobRepo.findById(batch.getJobId()).orElseThrow();
+            CsvSplit csvSplit = splitRepo.findById(splitId).orElseThrow();
+            Qianyi qianyi = qianyiRepo.findById(csvSplit.getQianyiId()).orElseThrow();
+            MigrationJob migrationJob = jobRepo.findById(csvSplit.getJobId()).orElseThrow();
 
-            // 3. 获取待比对的分片
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WAIT_VERIFY);
-            if (!splits.isEmpty()) {
-                log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
+            doVerifySingleSplit(csvSplit, qianyi.getDdlFilePath(), qianyi.getTableName(), migrationJob, strategy);
 
-                // 4. 并发执行 (Fan-out)
-                List<CompletableFuture<Void>> futures = splits.stream()
-                        .map(split -> CompletableFuture.runAsync(() -> {
-                            // 每个分片单独执行比对
-                            doVerifySingleSplit(batch.getDdlFilePath(), split, batch.getTableName(), job, strategy);
-                        }, verifyExecutor)) // <--- 使用专用线程池
-                        .collect(Collectors.toList());
+            // 2. 成功提交 -> PASS
+            stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验一致");
 
-                // 5. 等待所有任务完成 (Join)
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-            }
+            // 3. 【关键】清理临时文件 (代码略)
 
-            // 6. 汇总结果 (Fan-in)
-            // 再次查询数据库，看是否还有非 PASS 的状态
-            long failCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.PASS);
-            if (0 == failCount) {
-                markDetailSuccess(detail);
-            } else {
-                detail.setStatus(DetailStatus.WAIT_VERIFY); // 或 PARTIAL_FAIL
-                detail.setErrorMsg(failCount + " 个分片比对失败，请查看子任务详情");
-                detailRepo.save(detail);
-            }
+            // 4. 【关键】刷新父级 Detail 状态
+            QianyiDetail qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
+            stateManager.refreshDetailStatus(qianyiDetail.getId()); // 需在Manager加个简单查询方法，或这里先查再传
 
         } catch (Exception e) {
-            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-            if (null != detail) {
-                log.error("比对主流程异常 detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath(), e);
-                detail.setStatus(DetailStatus.WAIT_VERIFY);
-                detail.setErrorMsg("系统异常: " + e.getMessage());
-                detailRepo.save(detail);
-            } else {
-                log.error("比对主流程异常", e);
-            }
-        } finally {
-            // 7. 【出门解锁】
-            lockManager.releaseLock(detailId);
+            stateManager.switchSplitStatus(splitId, CsvSplitStatus.FAIL_VERIFY, e.getMessage());
+            // 失败也要刷新父级
+            // stateManager.refreshDetailStatus(...)
         }
-    }
-
-    private void markDetailSuccess(QianyiDetail detail) {
-        detail.setStatus(DetailStatus.PASS);
-        detail.setErrorMsg("校验通过");
-        detail.setUpdateTime(LocalDateTime.now());
-        detailRepo.save(detail);
-        log.info("DetailId={} 校验全部通过", detail.getId());
     }
 
     /**
      * 单个分片的具体执行逻辑
      * 捕获所有异常，确保不中断主线程的 join
      */
-    private void doVerifySingleSplit(String ddlFilePath, CsvSplit split, String tableName, MigrationJob job, VerifyStrategy strategy) {
+    private void doVerifySingleSplit(CsvSplit split, String ddlFilePath, String tableName, MigrationJob job, VerifyStrategy strategy) {
         try {
             // 设置状态为处理中 (可选，便于UI展示进度)
             // split.setStatus(CsvSplitStatus.VERIFYING);
