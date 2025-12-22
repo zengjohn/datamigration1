@@ -153,6 +153,8 @@ public class AppProperties {
     @Data
     public static class Verify {
         private String strategy = "USE_SOURCE_FILE";
+        private int maxDiffCount = 1000;
+        private String verifyResultBasePath = "d:/data/verify_results/";
     }
 
 }

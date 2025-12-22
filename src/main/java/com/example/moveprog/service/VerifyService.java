@@ -51,7 +51,9 @@ public class VerifyService {
     public void execute(Long detailId) {
         // 1. 【进门加锁】
         if (!lockManager.tryLock(detailId)) {
-            log.info("校验任务正在运行中，跳过: {}", detailId);
+            if (log.isDebugEnabled()) {
+                log.debug("校验任务正在运行中，跳过: {}", detailId);
+            }
             return;
         }
 
@@ -76,7 +78,7 @@ public class VerifyService {
             MigrationJob job = jobRepo.findById(batch.getJobId()).orElseThrow();
 
             // 3. 获取待比对的分片
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WV);
+            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WAIT_VERIFY);
             if (!splits.isEmpty()) {
                 log.info("开始并发比对任务 DetailId={}, 策略={}", detailId, strategy);
 
@@ -136,6 +138,8 @@ public class VerifyService {
             // 设置状态为处理中 (可选，便于UI展示进度)
             // split.setStatus(CsvSplitStatus.VERIFYING);
             // splitRepo.save(split);
+            // 结果文件路径: /path/split_100_diff.txt
+            String diffFilePath =  config.getVerify().getVerifyResultBasePath() + "split_" + split.getId() + "_diff.txt";
 
             String dbUrl = job.getTargetJdbcUrl();
             String user = job.getTargetUser();
@@ -152,10 +156,22 @@ public class VerifyService {
                     CloseableRowIterator dbIter = new JdbcRowIterator(dbUrl, user, pwd, sql);
 
                     // 2. 构建 文件 迭代器 (工厂方法见上一轮回答)
-                    CloseableRowIterator fileIter = createFileIterator(split, strategy)
+                    CloseableRowIterator fileIter = createFileIterator(split, strategy);
+
+                    // 【新增】创建差异写入器
+                    VerifyDiffWriter diffWriter = new VerifyDiffWriter(diffFilePath, config.getVerify().getMaxDiffCount())
             ) {
                 // 3. 核心比对
-                coreComparator.compareStreams(dbIter, fileIter);
+                coreComparator.compareStreams((JdbcRowIterator)dbIter, fileIter, diffWriter);
+
+                // 检查比对结果
+                if (diffWriter.getDiffCount() > 0) {
+                    split.setStatus(CsvSplitStatus.FAIL_VERIFY);
+                    split.setErrorMsg("验证失败，差异数: " + diffWriter.getDiffCount() + "，详见: " + diffFilePath);
+                } else {
+                    split.setStatus(CsvSplitStatus.PASS);
+                    split.setErrorMsg("验证通过");
+                }
             }
 
             // 成功
@@ -165,7 +181,7 @@ public class VerifyService {
 
         } catch (Exception e) {
             log.error("分片比对失败: detail id: {} split id: {}", split.getDetailId(), split.getId(), e);
-            split.setStatus(CsvSplitStatus.FAIL);
+            split.setStatus(CsvSplitStatus.FAIL_VERIFY);
             // 截取部分错误信息防止数据库字段溢出
             String msg = e.getMessage();
             split.setErrorMsg(msg != null && msg.length() > 500 ? msg.substring(0, 500) : msg);

@@ -39,7 +39,9 @@ public class LoadService {
     public void execute(Long detailId) {
         // 1. 【进门加锁】
         if (!lockManager.tryLock(detailId)) {
-            log.info("装载任务正在运行中，跳过: {}", detailId);
+            if (log.isDebugEnabled()) {
+                log.debug("装载任务正在运行中，跳过: {}", detailId);
+            }
             return;
         }
 
@@ -54,7 +56,7 @@ public class LoadService {
             detail.setStatus(DetailStatus.LOADING);
             detailRepo.save(detail);
 
-            long failLoadCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WV);
+            long failLoadCount = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WAIT_VERIFY);
             if (0 == failLoadCount) {
                 log.info("任务[{}] 没有 待装载切分 文件，直接完成", detailId);
                 finishDetailLoad(detail);
@@ -69,7 +71,7 @@ public class LoadService {
             List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(batch.getDdlFilePath());
 
             // 3. 获取待装载切分文件 (待装载)
-            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WL);
+            List<CsvSplit> splits = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WAIT_LOAD);
             if (!splits.isEmpty()) {
                 log.info("任务[{}] 开始并发装载 {} 个文件, 表: {}", detailId, splits.size(), batch.getTableName());
 
@@ -94,7 +96,7 @@ public class LoadService {
             }
 
             // 5. 检查最终结果
-            long failLoadCount1 = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WV);
+            long failLoadCount1 = splitRepo.countByDetailIdAndStatusNot(detailId, CsvSplitStatus.WAIT_VERIFY);
             if (failLoadCount1 == 0) {
                 finishDetailLoad(detail);
                 log.info("装载成功 detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
@@ -146,12 +148,12 @@ public class LoadService {
             executeUpdateSql(conn, loadSql);
 
             // Step 3: 标记成功
-            split.setStatus(CsvSplitStatus.WV);
+            split.setStatus(CsvSplitStatus.WAIT_VERIFY);
             split.setErrorMsg(null);
             splitRepo.save(split);
         } catch (Exception e) {
             log.error("切分文件装载失败: Path={}", split.getSplitFilePath(), e);
-            split.setStatus(CsvSplitStatus.FAIL);
+            split.setStatus(CsvSplitStatus.FAIL_LOAD);
             split.setErrorMsg(e.getMessage());
             splitRepo.save(split);
             throw new RuntimeException(e); // 抛出异常以便 CompletableFuture 感知

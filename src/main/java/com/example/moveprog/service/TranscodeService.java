@@ -53,7 +53,9 @@ public class TranscodeService {
     public void execute(Long detailId) {
         // 1. 【进门加锁】
         if (!lockManager.tryLock(detailId)) {
-            log.info("转码任务正在运行中，跳过: {}", detailId);
+            if (log.isDebugEnabled()) {
+                log.debug("转码任务正在运行中，跳过: {}", detailId);
+            }
             return;
         }
 
@@ -458,7 +460,7 @@ public class TranscodeService {
         split.setSplitFilePath(path.toString());
         split.setStartRowNo(startLineNo);
         split.setRowCount(rowCount);
-        split.setStatus(CsvSplitStatus.WL); // Wait Load
+        split.setStatus(CsvSplitStatus.WAIT_LOAD); // Wait Load
         splitRepo.save(split);
     }
 }

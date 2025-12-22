@@ -1,10 +1,14 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.service.impl.JdbcRowIterator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
@@ -17,90 +21,171 @@ public class CoreComparator {
      * @param dbIter 数据库数据的迭代器
      * @param fileIter 文件数据的迭代器 (无论是 UTF8 还是 IBM1388)
      */
-    public void compareStreams(CloseableRowIterator dbIter, CloseableRowIterator fileIter) {
-        long rowCount = 0;
+    public void compareStreams(JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException, SQLException {
+        // 1. 获取元数据 (用于打印列名)
+        int[] colTypes = dbIter.getColumnTypes();
+        String[] colNames = dbIter.getColumnNames();
 
-        // 双流同步推进
-        while (dbIter.hasNext() && fileIter.hasNext()) {
-            rowCount++;
-            String[] dbRow = dbIter.next();
-            String[] fileRow = fileIter.next();
+        // 2. 初始化缓存行
+        Object[] dbRow = dbIter.hasNext() ? dbIter.next() : null;
+        String[] fileRow = fileIter.hasNext() ? fileIter.next() : null;
 
-            // === 这里是你将来需要重写的部分 ===
-            doCompare(rowCount, dbRow, fileRow);
-            // =================================
-        }
+        try {
+            while (dbRow != null || fileRow != null) {
 
-        // 校验行数是否一致
-        if (dbIter.hasNext()) {
-            throw new RuntimeException("校验失败: 数据库行数多于文件 (Row " + (rowCount + 1) + ")");
+                // 获取行号 (假设行号在数组最后一位)
+                // 注意：需要处理 Long 类型转换
+                Long dbRowNo = getRowNo(dbRow);
+                Long fileRowNo = getRowNo(fileRow);
+
+                if (dbRowNo == null && fileRowNo == null) break; // 双双结束
+
+                // === Case 1: 源端存在，目标端不存在 (File 有, DB 没有) ===
+                // 此时 fileRowNo < dbRowNo (或者 DB 已经读完了)
+                if (dbRowNo == null || (fileRowNo != null && fileRowNo < dbRowNo)) {
+                    // 源端 !{行号}, 目标端null
+                    String msg = String.format("源端 !{%d}, 目标端 null", fileRowNo);
+                    diffWriter.writeDiff(msg);
+
+                    // File 指针后移，DB 不动
+                    fileRow = fileIter.hasNext() ? fileIter.next() : null;
+                }
+
+                // === Case 2: 源端不存在，目标端存在 (DB 有, File 没有) ===
+                // 此时 dbRowNo < fileRowNo (或者 File 已经读完了)
+                else if (fileRowNo == null || (dbRowNo != null && dbRowNo < fileRowNo)) {
+                    // 源端 null, 目标端 !{行号}
+                    String msg = String.format("源端 null, 目标端 !{%d}", dbRowNo);
+                    diffWriter.writeDiff(msg);
+
+                    // DB 指针后移，File 不动
+                    dbRow = dbIter.hasNext() ? dbIter.next() : null;
+                }
+
+                // === Case 3: 两端都存在，比较内容 ===
+                else {
+                    // 行号相等，开始比对字段
+                    String diffContent = checkContentDiff(dbRow, fileRow, colTypes, colNames, dbRowNo);
+                    if (diffContent != null) {
+                        diffWriter.writeDiff(diffContent);
+                    }
+
+                    // 两个指针都后移
+                    dbRow = dbIter.hasNext() ? dbIter.next() : null;
+                    fileRow = fileIter.hasNext() ? fileIter.next() : null;
+                }
+            }
+        } catch (VerifyDiffWriter.DiffLimitExceededException e) {
+            log.warn("比对差异过多，提前终止: {}", e.getMessage());
+            // 这里不抛出异常，视为正常截断，方便 Service 层处理后续状态
         }
-        if (fileIter.hasNext()) {
-            throw new RuntimeException("校验失败: 文件行数多于数据库 (Row " + (rowCount + 1) + ")");
-        }
-        
-        log.info("比对完成，共校验 {} 行", rowCount);
     }
 
-    // 具体的一行比对逻辑
-    private void doCompare(long rowNum, String[] dbRow, String[] fileRow) {
-        // 1. 校验列数
-        if (dbRow.length != fileRow.length) {
-            throw new RuntimeException("列数不一致");
-        }
+    /**
+     * 比对具体内容
+     * 返回 null 表示无差异，返回字符串表示差异信息
+     */
+    private String checkContentDiff(Object[] dbRow, String[] fileRow, int[] colTypes, String[] colNames, Long rowNo) {
+        // 减1是因为最后一列是行号，不参与业务数据比对
+        int compareLen = Math.min(dbRow.length, fileRow.length) - 1;
 
-        // 2. 先校验行号 (数组最后一个元素)
-        String dbRowNum = dbRow[dbRow.length - 1];
-        String fileRowNum = fileRow[fileRow.length - 1];
+        StringBuilder srcSb = new StringBuilder();
+        StringBuilder tgtSb = new StringBuilder();
+        boolean hasDiff = false;
 
-        if (!dbRowNum.equals(fileRowNum)) {
-            // 这是最关键的报错：说明发生了错位！
-            // 比如 DB 是行号3，文件读到了行号2(如果不跳空行)或者行号4
-            throw new RuntimeException(String.format(
-                    "行号对齐失败 (错位): DB行号=%s, 文件行号=%s", dbRowNum, fileRowNum
-            ));
-        }
+        for (int i = 0; i < compareLen; i++) {
+            Object dbVal = dbRow[i];
+            String fileVal = fileRow[i];
+            int type = colTypes[i];
 
-        for (int i = 0; i < fileRow.length; i++) {
-            String dbVal = (dbRow[i] == null) ? "" : dbRow[i].trim();
-            String fileVal = (fileRow[i] == null) ? "" : fileRow[i].trim();
+            // 格式化输出 (用于拼接结果)
+            String colName = colNames[i];
+            String dbValStr = String.valueOf(dbVal);
+            String fileValStr = (fileVal == null) ? "null" : fileVal;
 
-            if (!dbVal.equals(fileVal)) {
-                throw new RuntimeException(String.format(
-                    "内容不一致: Row=%d, Col=%d, DB='%s', File='%s'", 
-                    rowNum, i + 1, dbVal, fileVal
-                ));
+            if (!isCellEqual(dbVal, fileVal, type)) {
+                hasDiff = true;
+                // 发现差异，拼接详细信息
+                // 格式: user_name: 源值(csv), 目标值(db) ???
+                // 用户要求: src: user_id: val, balance: val ... tgt: ...
+                // 这里我们先把所有字段拼起来，最后再组装
             }
+
+            // 无论是否有差异，都按用户要求的格式拼装数据以便查看
+            if (i > 0) {
+                srcSb.append(", ");
+                tgtSb.append(", ");
+            }
+            srcSb.append(colName).append(": ").append(fileValStr);
+            tgtSb.append(colName).append(": ").append(dbValStr);
         }
+
+        if (hasDiff) {
+            // 源端 @{行号} src: ..., tgt: ...
+            return String.format("源端 @{%d} src: %s, tgt: %s", rowNo, srcSb.toString(), tgtSb.toString());
+        }
+        return null;
+    }
+
+    // 辅助：获取数组最后一个元素作为行号
+    private Long getRowNo(Object row) {
+        if (row == null) return null;
+        if (row instanceof Object[]) {
+            Object[] arr = (Object[]) row;
+            return Long.parseLong(String.valueOf(arr[arr.length - 1]));
+        }
+        return null; // Should not happen for DB
+    }
+
+    private Long getRowNo(String[] row) {
+        if (row == null) return null;
+        return Long.parseLong(row[row.length - 1]);
     }
 
     // 有时间时在将下面的按类型比对合并进来
-
-    /**
-     * 单个单元格比对逻辑
-     * @param dbStr 数据库取出的值 (通常已经通过 ResultSet.getString 转好了)
-     * @param fileStr CSV文件里的值
-     * @param sqlType java.sql.Types 的类型
-     */
-    protected boolean isCellEqual(String dbStr, String fileStr, int sqlType) {
-        String val1 = (dbStr == null) ? "" : dbStr.trim();
-        String val2 = (fileStr == null) ? "" : fileStr.trim();
-
-        if (val1.equals(val2)) return true;
-        if (val1.isEmpty() && val2.isEmpty()) return true;
+    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+        // 1. 处理 NULL
+        if (dbVal == null) {
+            return fileStr == null || fileStr.trim().isEmpty();
+        }
+        if (fileStr == null || fileStr.trim().isEmpty()) {
+            return false; // DB有值，文件没值
+        }
+        String csvVal = fileStr.trim();
 
         switch (sqlType) {
-            case java.sql.Types.TIMESTAMP:
-            case java.sql.Types.TIME:
-                return compareTimestamp(val1, val2);
+            // === 数值比较 (最关键) ===
+            case Types.DECIMAL:
+            case Types.NUMERIC:
+                BigDecimal dbDec = (BigDecimal) dbVal;
+                try {
+                    BigDecimal fileDec = new BigDecimal(csvVal);
+                    return dbDec.compareTo(fileDec) == 0;
+                } catch (NumberFormatException e) {
+                    return false;
+                }
 
-            case java.sql.Types.NUMERIC:
-            case java.sql.Types.DECIMAL:
-            case java.sql.Types.DOUBLE:
-                return compareNumber(val1, val2);
+            case Types.INTEGER:
+            case Types.BIGINT:
+                // 数据库可能是 Integer 或 Long，统一转 String 或 Long 比较
+                try {
+                    long dbLong = ((Number) dbVal).longValue();
+                    long fileLong = Long.parseLong(csvVal);
+                    return dbLong == fileLong;
+                } catch (Exception e) {
+                    return false;
+                }
 
+                // === 时间比较 ===
+            case Types.TIMESTAMP:
+                Timestamp dbTime = (Timestamp) dbVal;
+                // 复用之前的 parseTimestamp 逻辑把 csvVal 转成 Timestamp
+                Timestamp fileTime = parseTimestamp(csvVal);
+                return dbTime.compareTo(fileTime) == 0;
+
+            // === 字符串 ===
             default:
-                return false;
+                return String.valueOf(dbVal).trim().equals(csvVal);
         }
     }
 
