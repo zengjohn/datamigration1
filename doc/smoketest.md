@@ -4,9 +4,49 @@
 
 **前置条件**：
 
-1. Spring Boot 应用已启动，无报错日志。
-2. 数据库 (`MySQL`) 连接正常，表结构已初始化。
-3. 前端页面 (`index.html`) 可在浏览器访问。
+1. 目标库创建要迁移的表的表结构
+
+2. 修改应用配置 `application.yml`
+
+   特别是元数据保存的库
+
+3. Spring Boot 应用已启动，无报错日志。
+
+4. 数据库 (`MySQL`) 连接正常
+
+5. 前端页面 (`index.html`) 可在浏览器访问。
+
+
+
+假设`ok`文件在目录  `D:/data/ibm_input`，要迁移两张表 `t_user_info`和 `t_info`
+
+```sql
+CREATE TABLE `t_user_info` (
+  `user_id` varchar(50) DEFAULT NULL,
+  `user_name` varchar(100) DEFAULT NULL,
+  `balance` decimal(10,2) DEFAULT NULL,
+  `csvid` bigint(20) DEFAULT NULL,
+  `source_row_no` bigint(20) DEFAULT NULL,
+  KEY `idx_csvid_rowno` (`csvid`,`source_row_no`)
+) ;
+
+create table `t_info` like `t_user_info`;
+```
+
+说明：
+
+​	建表时，需要添加2个字段和一个索引。`csvid`用于记录拆分表的id, `source_row_no`用于记录数据在源`IBM1388 CSV`文件中的行数。主要为了数据验证用途。
+
+如果再次跑流程测试， 可以将元数据库清空,
+
+```sql
+drop table if exists test1.csv_split;
+drop table if exists test1.qianyi_detail;
+drop table if exists test1.qianyi;
+drop table if exists test1.migration_job;
+```
+
+
 
 #### 测试用例 1：全流程自动化 (Happy Path)
 
@@ -14,11 +54,39 @@
 
 | **步骤** | **操作描述**                                                 | **预期结果**                                                 |
 | -------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| **1**    | **创建作业** 点击“新建迁移作业”，输入名称“SmokeTest”、目录 `/tmp/test`，点击提交。 | 1. 列表刷新，出现新作业。 <br />2. 状态显示为 `ACTIVE`。 <br />3. 数据库 `t_migration_job` 新增一条记录。 |
-| **2**    | **模拟文件发现** 直接在数据库执行 SQL： `INSERT INTO t_qianyi_detail (job_id, file_name, status, update_time) VALUES ({jobId}, 'Test.csv', 'NEW', NOW());` | 1. 前端点击作业，右侧文件列表出现 `Test.csv`，状态 `NEW`。 <br />2. 几秒后，状态自动变为 `TRANSCODING`。 |
-| **3**    | **观察转码与拆分** 观察控制台日志或等待 3-5 秒。             | 1. Detail 状态变为 `PROCESSING_CHILDS` (蓝色)。 <br />2. 点击“查看切片”，弹窗中出现 3 个切片 (代码模拟逻辑)。 <br />3. 切片初始状态为 `WAIT_LOAD`。 |
+| **1**    | **创建作业** 点击“新建迁移作业”，<br />作业名称输入 “用户表迁移”<br />监控目录 `D:/data/ibm_input`<br /><br />目标数据库 URL 输入`jdbc:mysql://localtestdb:3306/test2?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true`，<br />点击提交。 | 1. 列表刷新，出现新作业。 <br />2. 状态显示为 `ACTIVE`。 <br />3. 数据库 `t_migration_job` 新增一条记录。 |
+| **2**    | 拷贝<br />待迁移的`CSV`文件（`data_01.csv`, `data_02.csv`, `data_03.csv`, `data_04.csv`,  `t_01.csv`, `t_02.csv`, `t_03.csv`, `t_04.csv`), <br />表结构`ddl`文件(`t_user_info.sql`和`t_info.sql`）， <br />然后`info.ok`和`user_info.ok`文件<br /> | 1. 前端点击作业，右侧文件列表出现 `data_01.csv`，状态 `NEW`。 <br />2. 几秒后，状态自动变为 `TRANSCODING`。 |
+| **3**    | **观察转码与拆分** 观察控制台日志或等待 3-5 秒。             | 1. Detail 状态变为 `PROCESSING_CHILDS` (蓝色)。 <br />2. 点击“查看切片”，弹窗中出现 多个切片。 <br />3. 切片初始状态为 `WAIT_LOAD`。 |
 | **4**    | **观察装载流程** 观察切片列表的状态变化（自动刷新）。        | 1. 切片状态依次变为 `LOADING` -> `WAIT_VERIFY`。 <br />2. 控制台输出 `[Load] 装载完成...`。 |
 | **5**    | **观察校验与完结** 继续观察。                                | 1. 切片状态变为 `VERIFYING` -> `PASS` (绿色)。 <br />2. 当所有切片都 PASS 后，关闭弹窗，观察父文件 Detail 状态。 <br />3. Detail 状态变为 `FINISHED` (绿色)。 |
+
+`ddl`文件`t_info.sql`
+
+```
+user_id,varchar
+user_name,varchar
+balance,decimal
+```
+
+
+
+`ok`文件`info.ok`
+
+```json
+{
+  "ddl": "D:/data/ibm_input/t_info.sql",
+  "csv": [
+    "D:/data/ibm_input/t_01.csv",
+    "D:/data/ibm_input/t_02.csv",
+    "D:/data/ibm_input/t_03.csv",
+    "D:/data/ibm_input/t_04.csv"
+  ]
+}
+```
+
+`ok`文件描述待迁移的表结构和数据, 其中`ddl`是`ddl`文件路径, 'csv'是相关保存数据的`csv`文件路径
+
+
 
 #### 测试用例 2：人工干预与重试 (Error & Retry)
 
@@ -26,7 +94,7 @@
 
 | **步骤** | **操作描述**                                                 | **预期结果**                                                 |
 | -------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| **1**    | **制造故障** 在流程跑到一半时（或流程结束后），手动修改数据库： `UPDATE t_csv_split SET status='FAIL_LOAD', error_msg='模拟断网' WHERE id={splitId};` | 1. 前端切片弹窗中，该切片立即变红。 <br />2. 状态显示 `FAIL_LOAD`。 <br />3. 出现黄色“♻️ 重试”按钮。 |
+| **1**    | **制造故障** 在流程跑到一半时（或流程结束后），手动修改数据库： <br />`UPDATE t_csv_split SET status='FAIL_LOAD', error_msg='模拟断网' WHERE id={splitId};` | 1. 前端切片弹窗中，该切片立即变红。 <br />2. 状态显示 `FAIL_LOAD`。 <br />3. 出现黄色“♻️ 重试”按钮。 |
 | **2**    | **执行重试** 点击前端的“重试”按钮。                          | 1. 按钮消失或变为不可点。 <br />2. 状态立即变为 `WAIT_LOAD`。 <br />3. 错误信息变为“重试指令...”。 |
 | **3**    | **验证恢复** 等待 5-10 秒。                                  | 1. 调度器重新捡起该任务。 <br />2. 状态流转：`LOADING` -> `WAIT_VERIFY` ... -> `PASS`。 <br />3. 故障修复成功。 |
 
