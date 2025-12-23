@@ -32,10 +32,12 @@ public class QianyiDetail {
     /**
      * 冗余一下表名，方便查询
      */
+    @Column(nullable = false)
     private String tableName;
     /**
      * 源 CSV 路径 IBM1388.csv
      */
+    @Column(nullable = false)
     private String sourceCsvPath;
 
     /**

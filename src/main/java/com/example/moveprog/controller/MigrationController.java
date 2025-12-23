@@ -39,8 +39,11 @@ public class MigrationController {
     @PostMapping("/job/create")
     public ResponseEntity<?> createJob(@RequestBody MigrationJob job) {
         // 简单校验
-        if (job.getName() == null || job.getSourceDirectory() == null) {
-            return ResponseEntity.badRequest().body("名称和源目录不能为空");
+        if (job.getName() == null ||
+                job.getSourceDirectory() == null ||
+                job.getTargetDbUrl() == null ||
+                job.getTargetDbUser() == null) {
+            return ResponseEntity.badRequest().body("名称, 源目录, 目标库url, 目标库用户名 不能为空");
         }
 
         // 默认状态

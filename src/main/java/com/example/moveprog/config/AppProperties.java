@@ -24,6 +24,8 @@ public class AppProperties {
 
     private Job job = new Job();
 
+    private MigrationThreadPool migrationThreadPool = new MigrationThreadPool();
+
     private Verify verify = new Verify();
 
     @Data
@@ -145,6 +147,19 @@ public class AppProperties {
         private int writeBufferSize = 1 * 1024 * 1024;
         // 切分行数
         private int splitRows = 500_000;
+    }
+
+    @Data
+    public static class ThreadPool {
+        private int corePoolSize = -1;
+        private int maxPoolSize = -1;
+    }
+
+    @Data
+    public static class MigrationThreadPool {
+        private ThreadPool transcode = new ThreadPool();
+        private ThreadPool load = new ThreadPool();
+        private ThreadPool verify = new ThreadPool();
     }
 
     @Data

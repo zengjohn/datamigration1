@@ -2,6 +2,7 @@ package com.example.moveprog.service;
 
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
+import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,8 @@ public class LoadService {
     private final QianyiRepository qianyiRepo;
     private final MigrationJobRepository jobRepo;
 
+    private final JobControlManager jobControlManager;
+
     public void execute(Long splitId) {
         // 1. 抢占任务 (乐观锁)
         if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.LOADING, null)) {
@@ -37,6 +40,9 @@ public class LoadService {
             log.info("  [Load] 开始装载 Split: {}", splitId);
 
             CsvSplit csvSplit = splitRepo.findById(splitId).orElse(null);
+            // 【埋点1】刚进来先查一下
+            jobControlManager.checkJobState(csvSplit.getJobId()); // 如果抛异常，直接被下面捕获
+
             QianyiDetail detailById = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
             Qianyi qianyi = qianyiRepo.findById(csvSplit.getQianyiId()).orElseThrow();
 
@@ -45,18 +51,22 @@ public class LoadService {
             List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(qianyi.getDdlFilePath());
 
             // 3. 获取待装载切分文件 (待装载)
-            MigrationJob job = jobRepo.findById(csvSplit.getJobId())
-                    .orElseThrow(() -> new RuntimeException("作业配置不存在"));
+            MigrationJob job = jobRepo.findById(csvSplit.getJobId()).orElseThrow(() -> new RuntimeException("作业配置不存在"));
             // 准备数据库连接信息
-            String url = job.getTargetJdbcUrl();
-            String user = job.getTargetUser();
-            String password = job.getTargetPassword();
+            String url = job.getTargetDbUrl();
+            String user = job.getTargetDbUser();
+            String password = job.getTargetDbPass();
 
             loadSingleSplitFile(detailById.getTableName(), csvSplit, columnNames, url, user, password);
 
             // 2. 成功提交 -> 待验证
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.WAIT_VERIFY, null);
             log.info("  [Load] 装载完成 Split: {}", splitId);
+        } catch (JobStoppedException e) {
+            log.warn("装载任务因作业停止而中断: Split[{}]", splitId);
+            // 【关键】如果是被停止的，不要标记为 FAIL！
+            // 应该把状态回滚为 WAIT_LOAD，这样用户点击“恢复”后，调度器能立马再次捡起它
+            stateManager.switchSplitStatus(splitId, CsvSplitStatus.WAIT_LOAD, "人工停止，重置等待");
         } catch (Exception e) {
             log.error("  [Load] 异常 Split: {}", splitId);
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.FAIL_LOAD, e.getMessage());

@@ -20,19 +20,23 @@ public class MigrationJob {
     /**
      * 作业名称，作业的唯一标识 (unique)
      */
+    @Column(nullable = false)
     private String name;
 
     /**
      * ok文件保存的目录(文件夹)
      */
+    @Column(nullable = false)
     private String sourceDirectory;       // 监视目录
 
     /**
      * csv迁移到目标库的配置
      */
-    private String targetJdbcUrl;
-    private String targetUser;
-    private String targetPassword;
+    @Column(nullable = false)
+    private String targetDbUrl;
+    @Column(nullable = false)
+    private String targetDbUser;
+    private String targetDbPass;
 
     /**
      * 是否启用

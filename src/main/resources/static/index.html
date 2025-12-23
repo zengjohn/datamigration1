@@ -89,7 +89,7 @@
                         <tbody>
                         <tr v-for="d in details" :key="d.id">
                             <td>{{ d.id }}</td>
-                            <td>{{ d.fileName }}</td>
+                            <td>{{ d.sourceCsvPath }}</td>
                             <td><span :class="getStatusClass(d.status)">{{ d.status }}</span></td>
                             <td class="small text-muted">{{ formatTime(d.updateTime) }}</td>
                             <td>
@@ -148,7 +148,7 @@
     <div v-if="showSplitModal" class="modal-overlay" @click.self="closeSplits">
         <div class="card modal-card-lg">
             <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">切片监控 - {{ selectedDetail?.fileName }}</h5>
+                <h5 class="mb-0">切片监控 - {{ selectedDetail?.sourceCsvPath }}</h5>
                 <button class="btn-close" @click="closeSplits"></button>
             </div>
             <div class="card-body modal-body-scroll p-0">
@@ -159,7 +159,7 @@
                     <tbody>
                     <tr v-for="s in splits" :key="s.id">
                         <td>{{ s.id }}</td>
-                        <td>{{ s.splitFileName }}</td>
+                        <td>{{ s.splitFilePath }}</td>
                         <td><span :class="getStatusClass(s.status)">{{ s.status }}</span></td>
                         <td class="text-danger small">{{ s.errorMsg }}</td>
                         <td>

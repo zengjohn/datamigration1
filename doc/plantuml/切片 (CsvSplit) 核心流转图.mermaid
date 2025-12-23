@@ -1,0 +1,19 @@
+stateDiagram-v2
+    direction TB
+
+    [*] --> WAIT_LOAD: 转码完成，生成切片
+
+    %% 装载阶段
+    WAIT_LOAD --> LOADING: 调度器领取 (LoadService)
+    LOADING --> WAIT_VERIFY: 装载成功
+    LOADING --> FAIL_LOAD: 装载失败 (超时/异常)
+    FAIL_LOAD --> WAIT_LOAD: 人工点击重试 (UI)
+
+    %% 校验阶段
+    WAIT_VERIFY --> VERIFYING: 调度器领取 (VerifyService)
+    VERIFYING --> PASS: 校验一致 (完结)
+    VERIFYING --> FAIL_VERIFY: 校验不一致/异常
+    FAIL_VERIFY --> WAIT_VERIFY: 人工点击重试 (UI)
+
+    %% 最终状态
+    PASS --> [*]: 删除临时文件/触发父级状态刷新

@@ -3,6 +3,8 @@ package com.example.moveprog.repository;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.DetailStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collection;
@@ -43,5 +45,9 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     List<QianyiDetail> findTop5ByStatus(DetailStatus status);
 
     List<QianyiDetail> findByJobId(Long jobId);
+
+    @Modifying
+    @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus")
+    int resetStatus(DetailStatus oldStatus, DetailStatus newStatus);
 
 }

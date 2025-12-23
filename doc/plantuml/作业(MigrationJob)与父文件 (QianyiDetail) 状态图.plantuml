@@ -1,0 +1,46 @@
+@startuml
+!theme plain
+hide empty description
+
+' 定义样式
+skinparam state {
+  BackgroundColor<<Active>> LightBlue
+  BackgroundColor<<Stop>> LightGray
+  BackgroundColor<<Error>> LightPink
+  BackgroundColor<<Success>> LightGreen
+  BorderColor DarkSlateGray
+}
+
+title 数据迁移 - 作业与父文件状态流转
+
+state "MigrationJob (作业控制)" as Job {
+    state ACTIVE <<Active>>
+    state STOPPED <<Stop>>
+    
+    [*] --> ACTIVE : 创建作业
+    ACTIVE --> STOPPED : 用户点击停止\n(停止新任务分发)
+    STOPPED --> ACTIVE : 用户点击恢复
+}
+
+state "QianyiDetail (父文件生命周期)" as Detail {
+    state NEW
+    state TRANSCODING {
+        [*] -> 读取大文件
+        读取大文件 -> 拆分切片
+    }
+    state PROCESSING_CHILDS : 等待子任务完成
+    state FINISHED <<Success>>
+    state FINISHED_WITH_ERROR <<Error>>
+    state FAIL_TRANSCODE <<Error>>
+
+    [*] --> NEW : 扫描器发现文件
+    NEW --> TRANSCODING : 调度器领取
+    
+    TRANSCODING --> PROCESSING_CHILDS : 拆分成功\n生成 Split 记录
+    TRANSCODING --> FAIL_TRANSCODE : IO异常/编码错误
+    
+    PROCESSING_CHILDS --> FINISHED : 所有切片状态为 PASS
+    PROCESSING_CHILDS --> FINISHED_WITH_ERROR : 存在失败切片且重试无效
+}
+
+@enduml

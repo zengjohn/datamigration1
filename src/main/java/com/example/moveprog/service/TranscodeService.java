@@ -6,6 +6,7 @@ import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
+import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
@@ -46,6 +47,8 @@ public class TranscodeService {
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
 
+    private final JobControlManager jobControlManager;
+
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
 
@@ -57,10 +60,14 @@ public class TranscodeService {
         stateManager.updateDetailStatus(detailId, DetailStatus.TRANSCODING);
 
         try {
+            // 【关键】开始真正的逻辑前，先清理掉可能的旧脏数据
+            // 如果是重试的任务，可能之前已经生成了一部分 Split
+            cleanUpOldSplits(detailId);
+
             // 2. 【状态双重检查】(推荐)
             // 防止在排队等待线程池期间，状态已被修改
             QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-            if (detail == null || detail.getStatus() != DetailStatus.NEW) {
+            if (detail == null || detail.getStatus() != DetailStatus.TRANSCODING) {
                 return;
             }
             log.info(">>> 开始转码, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
@@ -70,12 +77,41 @@ public class TranscodeService {
             // 转码完成，进入"子任务处理中"状态
             stateManager.updateDetailStatus(detailId, DetailStatus.PROCESSING_CHILDS);
             log.info("<<< 转码完成 Detail: {}", detailId);
+        } catch (JobStoppedException e) {
+            // 【特殊处理】用户叫停
+            log.warn("任务被中断: {}", e.getMessage());
+            // 此时应该把状态重置回 NEW，或者保持 TRANSCODING 等待下次“启动修复”
+            // 建议：不做处理，直接 return。因为下次启动时的 StartupTaskResetter 会负责把 TRANSCODING 重置为 NEW
+            return;
         } catch (Exception e) {
+            // 【常规错误】
+            log.error("转码失败", e);
             stateManager.updateDetailStatus(detailId, DetailStatus.FAIL_TRANSCODE);
         }
     }
 
+    private void cleanUpOldSplits(Long detailId) {
+        List<CsvSplit> byDetailIdAndStatuses = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WAIT_LOAD);
 
+        // DELETE FROM t_csv_split WHERE detail_id = ?
+        splitRepo.deleteByDetailId(detailId);
+
+        // 同时也建议物理删除磁盘上的临时文件（如果有残留）
+        for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
+            String splitFilePath = byDetailIdAndStatus.getSplitFilePath();
+            try {
+                Files.deleteIfExists(Path.of(splitFilePath));
+            } catch (Exception e){}
+        }
+    }
+
+    /**
+     * IBM1388 csv文件转码为utf8 csv文件，并拆分成多个文件(便于并发处理)
+     * @param qianyiId 迁移单（对应一个ok文件)
+     * @param detailId 迁移明细(对应一个IBM1388源csv文件)
+     * @param sourcePath 源IBM1388 csv文件
+     * @throws IOException
+     */
     private void transcodeSingleSourceFile(Long qianyiId, Long detailId, String sourcePath) throws IOException {
         // 1. 获取配置参数
         AppProperties.CsvDetailConfig ibmSource = config.getCsv().getIbmSource();
@@ -124,6 +160,11 @@ public class TranscodeService {
                 Files.createDirectories(Paths.get(config.getJob().getErrorDir()));
 
                 while (null != (originalLine = parser.parseNext())) {
+                    // 【埋点】每处理 1000 行检查一次
+                    // 没必要每行都查，太浪费性能；也没必要查太少，响应太慢
+                    if (lineNo % 1000 == 0) {
+                        jobControlManager.checkJobState(findQianyiById.getJobId());
+                    }
                     currentLineNoFromContext = parser.getContext().currentLine();
 
                     // 1. 准备要写入的数据对象 (默认就是原始数据)

@@ -55,6 +55,10 @@ public class VerifyService {
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验一致");
 
             // 3. 【关键】清理临时文件 (代码略)
+            // 【新增】清理磁盘空间
+            // 只有 verify 通过了，这个切片文件才真正没用了
+            // 现在的流程是：大文件 -> 拆分 -> 小CSV -> 装载 -> 校验 -> 完成。 如果不删除中间的小 CSV 文件，你的磁盘很快就会爆满。 建议：在状态流转为 PASS 后，立即清理文件。
+            // deleteSplitFile(splitId);
 
             // 4. 【关键】刷新父级 Detail 状态
             QianyiDetail qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
@@ -63,7 +67,9 @@ public class VerifyService {
         } catch (Exception e) {
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.FAIL_VERIFY, e.getMessage());
             // 失败也要刷新父级
-            // stateManager.refreshDetailStatus(...)
+            CsvSplit csvSplit = splitRepo.findById(splitId).orElseThrow();
+            stateManager.refreshDetailStatus(csvSplit.getDetailId());
+            // 失败时不删除文件！方便运维人员去磁盘上查看这个文件到底哪里有问题
         }
     }
 
@@ -79,9 +85,9 @@ public class VerifyService {
             // 结果文件路径: /path/split_100_diff.txt
             String diffFilePath =  config.getVerify().getVerifyResultBasePath() + "split_" + split.getId() + "_diff.txt";
 
-            String dbUrl = job.getTargetJdbcUrl();
-            String user = job.getTargetUser();
-            String pwd = job.getTargetPassword();
+            String dbUrl = job.getTargetDbUrl();
+            String user = job.getTargetDbUser();
+            String pwd = job.getTargetDbPass();
 
             List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(ddlFilePath);
             String columnList = columnNames.stream().collect(Collectors.joining(",")) + ","+"source_row_no";
@@ -100,7 +106,7 @@ public class VerifyService {
                     VerifyDiffWriter diffWriter = new VerifyDiffWriter(diffFilePath, config.getVerify().getMaxDiffCount())
             ) {
                 // 3. 核心比对
-                coreComparator.compareStreams((JdbcRowIterator)dbIter, fileIter, diffWriter);
+                coreComparator.compareStreams(split.getJobId(), (JdbcRowIterator)dbIter, fileIter, diffWriter);
 
                 // 检查比对结果
                 if (diffWriter.getDiffCount() > 0) {

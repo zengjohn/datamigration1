@@ -22,20 +22,23 @@ public class Qianyi {
      * 关联哪个配置
      * 相当于MigrationJob表id的外键引用
      */
-    @Column(name = "job_id")
+    @Column(name = "job_id", nullable = false)
     private Long jobId;
 
     /**
      * OK文件路径
      */
+    @Column(nullable = false)
     private String okFilePath;
     /**
      * 目标端表名 （目前的设计，要求一个ok文件中所有的csv文件都装载到同一张表)
      */
+    @Column(nullable = false)
     private String tableName;
     /**
      * schema文件路径
      */
+    @Column(nullable = false)
     private String ddlFilePath;
 
     /**

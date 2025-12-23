@@ -1,0 +1,43 @@
+@startuml
+!theme plain
+hide empty description
+
+' 样式定义
+skinparam state {
+  BackgroundColor<<Wait>> Wheat
+  BackgroundColor<<Process>> LightBlue
+  BackgroundColor<<Fail>> LightCoral
+  BackgroundColor<<Pass>> LightGreen
+}
+
+title 数据切片 (CsvSplit) 状态流转与重试机制
+
+[*] --> WAIT_LOAD : 转码完成，生成切片记录
+
+state "Step 1: 数据库装载 (Load)" as LoadPhase {
+    state WAIT_LOAD <<Wait>> : 等待调度
+    state LOADING <<Process>> : 装载中 (乐观锁抢占)
+    state FAIL_LOAD <<Fail>> : 装载失败 (DB异常/超时)
+
+    WAIT_LOAD --> LOADING : Dispatcher 调度
+    LOADING --> WAIT_VERIFY : 装载成功
+    LOADING --> FAIL_LOAD : 异常捕获
+
+    FAIL_LOAD --> WAIT_LOAD : <color:red><b>人工点击 [重试] 按钮</b></color>
+}
+
+state "Step 2: 数据校验 (Verify)" as VerifyPhase {
+    state WAIT_VERIFY <<Wait>> : 等待校验
+    state VERIFYING <<Process>> : 校验中 (比对行数/抽检)
+    state PASS <<Pass>> : 校验通过 (最终态)
+    state FAIL_VERIFY <<Fail>> : 校验不一致
+
+    WAIT_VERIFY --> VERIFYING : Dispatcher 调度
+    VERIFYING --> PASS : 数据一致
+    VERIFYING --> FAIL_VERIFY : 数据差异
+
+    FAIL_VERIFY --> WAIT_VERIFY : <color:red><b>人工点击 [重试] 按钮</b></color>
+}
+
+PASS --> [*] : 触发父状态刷新\n删除临时CSV
+@enduml

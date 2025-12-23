@@ -4,6 +4,8 @@ import com.example.moveprog.enums.CsvSplitStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 /**
  * 拆分切片 - csv(utf8编码)
  *   一个IBM1388 csv文件，为了支持并发装载， 会被转码拆分成多个utf8文件
@@ -37,15 +39,18 @@ public class CsvSplit {
     /**
      * 切分后的 UTF8 文件 例如 split_001.csv
      */
+    @Column(nullable = false)
     private String splitFilePath;
 
     /**
      * 拆分文件第一行在原文件中的行数
      */
+    @Column(nullable = false)
     private Long startRowNo;
     /**
      * 行数
      */
+    @Column(nullable = false)
     private Long rowCount;
 
     /**
@@ -57,4 +62,8 @@ public class CsvSplit {
     
     @Column(columnDefinition = "TEXT")
     private String errorMsg;
+
+    private LocalDateTime updateTime;
+    @PrePersist @PreUpdate void onUpdate() { updateTime = LocalDateTime.now(); }
+
 }

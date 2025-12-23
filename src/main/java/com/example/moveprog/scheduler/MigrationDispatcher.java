@@ -1,5 +1,6 @@
 package com.example.moveprog.scheduler;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -7,8 +8,10 @@ import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.service.LoadService;
+import com.example.moveprog.service.StateManager;
 import com.example.moveprog.service.TranscodeService;
 import com.example.moveprog.service.VerifyService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -17,6 +20,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,14 +29,19 @@ import java.util.concurrent.Executor;
 @Configuration
 @EnableScheduling
 @Slf4j
+@RequiredArgsConstructor
 public class MigrationDispatcher {
 
-    @Autowired private QianyiDetailRepository detailRepo;
-    @Autowired private CsvSplitRepository splitRepo;
+    private final QianyiDetailRepository detailRepo;
+    private final CsvSplitRepository splitRepo;
     
-    @Autowired private TranscodeService transcodeService;
-    @Autowired private LoadService loadService;
-    @Autowired private VerifyService verifyService;
+    private final TranscodeService transcodeService;
+    private final LoadService loadService;
+    private final VerifyService verifyService;
+    private final StateManager stateManager;
+
+    // 注入 AppProperties 用于获取配置...
+    private final AppProperties config;
 
     // 内存防抖 Set (防止重复提交到队列)
     private Set<Long> inFlightSplits = ConcurrentHashMap.newKeySet();
@@ -40,26 +49,35 @@ public class MigrationDispatcher {
     // --- 1. 线程池配置 (隔离) ---
     @Bean("transcodeExecutor")
     public Executor transcodeExecutor() {
+        AppProperties.ThreadPool transcode = config.getMigrationThreadPool().getTranscode();
         ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(2); ex.setMaxPoolSize(4);
+        ex.setCorePoolSize(transcode.getCorePoolSize() > 0 ? transcode.getCorePoolSize() : 2);
+        ex.setMaxPoolSize(transcode.getMaxPoolSize() > 0 ? transcode.getMaxPoolSize() : 4);
         ex.setThreadNamePrefix("Task-Trans-");
-        ex.initialize(); return ex;
+        ex.initialize();
+        return ex;
     }
 
     @Bean("loadExecutor")
     public Executor loadExecutor() {
+        AppProperties.ThreadPool load = config.getMigrationThreadPool().getLoad();
         ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(5); ex.setMaxPoolSize(10);
+        ex.setCorePoolSize(load.getCorePoolSize() > 0 ? load.getCorePoolSize() : 5);
+        ex.setMaxPoolSize(load.getMaxPoolSize() > 0 ? load.getMaxPoolSize() : 10);
         ex.setThreadNamePrefix("Task-Load-");
-        ex.initialize(); return ex;
+        ex.initialize();
+        return ex;
     }
 
     @Bean("verifyExecutor")
     public Executor verifyExecutor() {
+        AppProperties.ThreadPool verify = config.getMigrationThreadPool().getVerify();
         ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(5); ex.setMaxPoolSize(10);
+        ex.setCorePoolSize(verify.getCorePoolSize() > 0 ? verify.getCorePoolSize() : 5);
+        ex.setMaxPoolSize(verify.getMaxPoolSize() > 0  ? verify.getMaxPoolSize() : 10);
         ex.setThreadNamePrefix("Task-Verify-");
-        ex.initialize(); return ex;
+        ex.initialize();
+        return ex;
     }
 
     @Autowired private Executor transcodeExecutor;
@@ -74,6 +92,31 @@ public class MigrationDispatcher {
         dispatchVerify();
     }
 
+    /**
+     * 每 10 分钟运行一次
+     * 检查那些"卡住"超过 30 分钟的任务
+     */
+    @Scheduled(fixedDelay = 600000)
+    public void rescueStuckTasks() {
+        LocalDateTime timeThreshold = LocalDateTime.now().minusMinutes(30);
+
+        // 1. 捞出处于 LOADING 状态 且 最后更新时间早于 30分钟前 的任务
+        List<CsvSplit> stuckLoadingSplits = splitRepo.findByStatusAndUpdateTimeBefore(CsvSplitStatus.LOADING, timeThreshold);
+        for (CsvSplit split : stuckLoadingSplits) {
+            log.error("发现僵尸任务 Split[{}]，卡在 LOADING 超过30分钟，强制重置。", split.getId());
+            // 强制重置状态
+            stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_LOAD, "系统自动重置Loading超时任务");
+        }
+
+        // 2. 捞出处于 VERIFYING 状态 且 最后更新时间早于 30分钟前 的任务
+        List<CsvSplit> stuckVerifyingSplits = splitRepo.findByStatusAndUpdateTimeBefore(CsvSplitStatus.LOADING, timeThreshold);
+        for (CsvSplit split : stuckVerifyingSplits) {
+            log.error("发现僵尸任务 Split[{}]，卡在 VERIFYING 超过30分钟，强制重置。", split.getId());
+            // 强制重置状态
+            stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_VERIFY, "系统自动重置Verifying超时任务");
+        }
+
+    }
 
     // --- 阶段 1: 调度转码 (针对 Detail) ---
     private void dispatchTranscode() {

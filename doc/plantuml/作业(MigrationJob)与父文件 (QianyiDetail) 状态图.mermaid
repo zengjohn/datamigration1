@@ -1,0 +1,28 @@
+stateDiagram-v2
+    direction LR
+
+    state "MigrationJob (作业)" as Job {
+        [*] --> ACTIVE: 创建
+        ACTIVE --> STOPPED: 用户点击停止
+        STOPPED --> ACTIVE: 用户点击恢复
+    }
+
+    state "QianyiDetail (父文件)" as Detail {
+        [*] --> NEW: 扫描发现文件
+        NEW --> TRANSCODING: 调度器领取
+
+        state TRANSCODING {
+            [*] --> 转码中
+            转码中 --> 拆分切片
+        }
+
+        TRANSCODING --> FAIL_TRANSCODE: 异常/失败
+        TRANSCODING --> PROCESSING_CHILDS: 转码成功/生成Splits
+
+        state PROCESSING_CHILDS {
+            note right of PROCESSING_CHILDS: 等待所有子切片完成
+        }
+
+        PROCESSING_CHILDS --> FINISHED: 所有子切片 PASS
+        PROCESSING_CHILDS --> FINISHED_WITH_ERROR: 部分子切片失败
+    }

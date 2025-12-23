@@ -1,7 +1,9 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.service.impl.JdbcRowIterator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -15,13 +17,15 @@ import java.time.format.DateTimeParseException;
 @Slf4j
 @Component
 public class CoreComparator {
+    @Autowired
+    private JobControlManager jobControlManager;
 
     /**
      * 核心比对方法 (纯逻辑，不涉及 IO 细节)
      * @param dbIter 数据库数据的迭代器
      * @param fileIter 文件数据的迭代器 (无论是 UTF8 还是 IBM1388)
      */
-    public void compareStreams(JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException, SQLException {
+    public void compareStreams(Long jobId, JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException, SQLException {
         // 1. 获取元数据 (用于打印列名)
         int[] colTypes = dbIter.getColumnTypes();
         String[] colNames = dbIter.getColumnNames();
@@ -31,7 +35,13 @@ public class CoreComparator {
         String[] fileRow = fileIter.hasNext() ? fileIter.next() : null;
 
         try {
+            int count = 0;
             while (dbRow != null || fileRow != null) {
+                // 【埋点】每处理 1000 行检查一次
+                // 没必要每行都查，太浪费性能；也没必要查太少，响应太慢
+                if (count++ % 1000 == 0) {
+                    jobControlManager.checkJobState(jobId);
+                }
 
                 // 获取行号 (假设行号在数组最后一位)
                 // 注意：需要处理 Long 类型转换
@@ -75,6 +85,12 @@ public class CoreComparator {
                     fileRow = fileIter.hasNext() ? fileIter.next() : null;
                 }
             }
+        } catch (JobStoppedException e) {
+            // 【特殊处理】用户叫停
+            log.warn("任务被中断: {}", e.getMessage());
+            // 此时应该把状态重置回 NEW，或者保持 TRANSCODING 等待下次“启动修复”
+            // 建议：不做处理，直接 return。因为下次启动时的 StartupTaskResetter 会负责把 TRANSCODING 重置为 NEW
+            return;
         } catch (VerifyDiffWriter.DiffLimitExceededException e) {
             log.warn("比对差异过多，提前终止: {}", e.getMessage());
             // 这里不抛出异常，视为正常截断，方便 Service 层处理后续状态

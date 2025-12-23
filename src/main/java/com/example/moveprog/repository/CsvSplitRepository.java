@@ -3,8 +3,11 @@ package com.example.moveprog.repository;
 import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.enums.CsvSplitStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -32,5 +35,11 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
     List<CsvSplit> findTop20ByStatus(CsvSplitStatus status);
 
     List<CsvSplit> findByJobId(Long jobId);
+
+    @Modifying
+    @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.status = :oldStatus")
+    int resetStatus(CsvSplitStatus oldStatus, CsvSplitStatus newStatus);
+
+    List<CsvSplit> findByStatusAndUpdateTimeBefore(CsvSplitStatus status, LocalDateTime updateTime);
 
 }
