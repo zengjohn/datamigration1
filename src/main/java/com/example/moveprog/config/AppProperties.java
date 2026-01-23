@@ -7,6 +7,9 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * 应用配置
  */
@@ -25,6 +28,8 @@ public class AppProperties {
     private Job job = new Job();
 
     private MigrationThreadPool migrationThreadPool = new MigrationThreadPool();
+
+    private LoadJdbc loadJdbc = new LoadJdbc();
 
     private Verify verify = new Verify();
 
@@ -155,10 +160,22 @@ public class AppProperties {
         private int maxPoolSize = -1;
     }
 
+    /**
+     * 线程池配置
+     */
     @Data
     public static class MigrationThreadPool {
+        /**
+         * 转码
+         */
         private ThreadPool transcode = new ThreadPool();
+        /**
+         * 装载
+         */
         private ThreadPool load = new ThreadPool();
+        /**
+         * 验证
+         */
         private ThreadPool verify = new ThreadPool();
     }
 
@@ -168,6 +185,23 @@ public class AppProperties {
         private String errorDir;
     }
 
+    /**
+     * 目标端装载时, 预先执行sql
+     * 用于准备环境(比如禁用约束，日志等）
+     */
+    @Data
+    public static class LoadJdbc {
+        private List<String> preSqlList = Arrays.asList(
+                "SET unique_checks=0",
+                "SET foreign_key_checks=0",
+                "SET sql_log_bin=0"
+        );
+        private String urlOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
+    }
+
+    /**
+     * 验证配置
+     */
     @Data
     public static class Verify {
         private String strategy = "USE_SOURCE_FILE";

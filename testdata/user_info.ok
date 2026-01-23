@@ -1,0 +1,9 @@
+{
+  "ddl": "D:/data/ibm_input/t_user_info.sql",
+  "csv": [
+    "D:/data/ibm_input/data_01.csv",
+    "D:/data/ibm_input/data_02.csv",
+    "D:/data/ibm_input/data_03.csv",
+    "D:/data/ibm_input/data_04.csv"
+  ]
+}

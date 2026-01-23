@@ -1,5 +1,6 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.exception.JobStoppedException;
@@ -30,6 +31,8 @@ public class LoadService {
 
     private final JobControlManager jobControlManager;
 
+    private final AppProperties config;
+
     public void execute(Long splitId) {
         // 1. 抢占任务 (乐观锁)
         if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.LOADING, null)) {
@@ -53,7 +56,7 @@ public class LoadService {
             // 3. 获取待装载切分文件 (待装载)
             MigrationJob job = jobRepo.findById(csvSplit.getJobId()).orElseThrow(() -> new RuntimeException("作业配置不存在"));
             // 准备数据库连接信息
-            String url = job.getTargetDbUrl();
+            String url = job.getTargetDbUrl() + config.getLoadJdbc().getUrlOptions();
             String user = job.getTargetDbUser();
             String password = job.getTargetDbPass();
 
@@ -85,6 +88,8 @@ public class LoadService {
         log.info("开始装载切分文件: tableName: {}, split id: {}", tableName, split.getId());
 
         try (Connection conn = DriverManager.getConnection(url, user, pwd)) {
+            executeSqlsBeforeLoad(conn);
+
             // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)
             // 注意：LOAD DATA LOCAL INFILE 需要特殊的驱动设置
             // Step 1: 幂等删除 (根据 csvid 清理旧数据)
@@ -98,6 +103,8 @@ public class LoadService {
             // 注意：如果是 MySQL，必须在 URL 加上 allowLoadLocalInfile=true
             // 且这里的 loadSql 可能需要转为 InputStream 方式发送，或者直接 execute
             // 简单方式：
+            // boolean autoCommit = config.getLoadJdbc().isAutoCommit();
+            // load data infile 数据库自己会处理事务（提交或者回滚，程序不用显式出来）
             executeUpdateSql(conn, loadSql);
 
             // Step 3: 标记成功
@@ -110,6 +117,20 @@ public class LoadService {
             split.setErrorMsg(e.getMessage());
             splitRepo.save(split);
             throw new RuntimeException(e); // 抛出异常以便 CompletableFuture 感知, 以及回滚事务
+        }
+    }
+
+    // 【新增优化】 会话级加速配置, 比如执行
+    // SET unique_checks=0; SET foreign_key_checks=0;
+    // 如果账号有权限且不需要Binlog, SET sql_log_bin=0;
+    private void executeSqlsBeforeLoad(Connection conn) throws SQLException {
+        List<String> preSqlList = config.getLoadJdbc().getPreSqlList();
+        if (preSqlList != null && !preSqlList.isEmpty()) {
+            try(Statement stmt = conn.createStatement()) {
+                for (String sqlStr : preSqlList) {
+                    stmt.execute(sqlStr);
+                }
+            }
         }
     }
 

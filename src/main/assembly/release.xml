@@ -46,5 +46,18 @@
             <fileMode>0755</fileMode>
             <lineEnding>unix</lineEnding>
         </fileSet>
+
+        <fileSet>
+            <outputDirectory>testdata/</outputDirectory>
+            <directory>testdata</directory>
+            <directoryMode>0750</directoryMode>
+            <fileMode>0640</fileMode>
+            <includes>
+                <include>*.csv</include>
+                <include>*.sql</include>
+                <include>*.ok</include>
+            </includes>
+        </fileSet>
+
     </fileSets>
 </assembly>

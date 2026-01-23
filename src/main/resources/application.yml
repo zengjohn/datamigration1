@@ -55,7 +55,7 @@ app:
   performance:
     read-buffer-size: 16777216  # 16MB (读取大文件建议加大)
     write-buffer-size: 2097152  # 2MB
-    split-rows: 500000          # 多少行切分一个文件
+    split-rows: 2000000          # 多少行切分一个文件
     max-chars-per-column: 100000 # 防止某些超长备注导致OOM
 
   migration-thread-pool:
@@ -73,6 +73,14 @@ app:
   job:
     output-dir: /data/moveprog/output_split/
     error-dir: /data/moveprog/output_error/
+
+  loadJdbc:
+    pre-sql-list:
+      - "SET unique_checks=0"
+      - "SET foreign_key_checks=0"
+      - "SET sql_log_bin=0"
+      - "SET SESSION tx_isolation = 'READ-UNCOMMITTED'"
+    url-options: "?Unicode=true&useSSL=false&characterEncoding=utf8&allowLoadLocalInfile=true&rewriteBatchedStatements=true&useServerPrepStmts=false&cachePrepStmts=false&tinyInt1isBit=false&yearIsDateType=false&socketTimeout=3600000&connectTimeout=30000&autoReconnect=true&failOverReadOnly=false&useCompression=true&tdsqlLoadDataMode=fast&tdsqlSkipSlaveCheck=true&tdsqlBatchSize=1000000"
 
 logging:
   level:
