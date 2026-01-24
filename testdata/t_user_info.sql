@@ -1,3 +1,0 @@
-user_id,varchar
-user_name,varchar
-balance,decimal

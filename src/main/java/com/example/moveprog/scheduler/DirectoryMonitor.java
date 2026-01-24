@@ -10,6 +10,7 @@ import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -18,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -37,7 +41,13 @@ public class DirectoryMonitor {
 
         for (MigrationJob job : jobs) {
             try {
+                // 简单校验目录
                 File dir = new File(job.getSourceDirectory());
+                if (!dir.exists() || !dir.isDirectory()) {
+                    log.warn("作业[{}] 监控目录不存在: {}", job.getName(), job.getSourceDirectory());
+                    continue;
+                }
+
                 File[] okFiles = dir.listFiles((d, name) -> name.endsWith(".ok"));
                 if (okFiles == null) continue;
 
@@ -49,48 +59,124 @@ public class DirectoryMonitor {
             }
         }
     }
-
-    @Transactional // 保证原子性：Qianyi 和 Detail 要么都生，要么都不生
+    /**
+     * 处理单个 OK 文件
+     * 无论成功失败，都尽量保存记录，以免重复扫描或丢失错误现场
+     */
+    @Transactional
     public void processOkFile(MigrationJob job, File okFile) {
         String okPath = okFile.getAbsolutePath();
-        if (qianyiRepo.existsByOkFilePath(okPath)) return; // 查重
+        // 1. 防重：如果已经处理过（无论成功失败），直接跳过
+        // 如果用户想重试 FAIL_PARSE 的任务，需要在界面点击“重试”（需配套接口删除旧记录）
+        if (qianyiRepo.existsByOkFilePath(okPath)) return;
+
+        log.info("发现新任务文件: {}", okPath);
+
+        // 初始化对象（先不保存，等解析成功再保存，或者捕获异常保存失败状态）
+        Qianyi qianyi = new Qianyi();
+        qianyi.setJobId(job.getId());
+        qianyi.setOkFilePath(okPath);
+        // 默认表名：如果 JSON 解析挂了，用文件名兜底
+        String defaultTableName = okFile.getName().replace(".ok", "");
+        qianyi.setTableName(defaultTableName);
+        qianyi.setDdlFilePath(""); // 暂时置空
 
         try {
-            // 1. 解析 JSON
-            String jsonContent = Files.readString(okFile.toPath());
-            OkFileContent content = gson.fromJson(jsonContent, OkFileContent.class);
+            // 2. 读取并解析 JSON
+            String jsonContent;
+            try {
+                jsonContent = Files.readString(okFile.toPath());
+            } catch (Exception e) {
+                throw new RuntimeException("无法读取文件: " + e.getMessage());
+            }
 
-            // 2. 解析表名 (假设 DDL 文件名就是表名，如 /path/to/T_USER_01.sql)
-            String tableName = new File(content.ddl).getName().replace(".sql", ""); // 简单处理
+            OkFileContent content;
+            try {
+                content = gson.fromJson(jsonContent, OkFileContent.class);
+            } catch (JsonSyntaxException e) {
+                throw new RuntimeException("文件内容不是有效的 JSON 格式");
+            }
 
-            // 3. 创建 Qianyi (批次)
-            Qianyi qianyi = new Qianyi();
-            qianyi.setJobId(job.getId());
-            qianyi.setTableName(tableName);
-            qianyi.setOkFilePath(okPath);
-            qianyi.setDdlFilePath(content.ddl);
+            if (content == null) {
+                throw new RuntimeException("JSON 内容为空");
+            }
+
+            // 3. 处理路径 (支持相对路径) & 校验文件存在
+            // 获取 ok 文件所在的目录，作为相对路径的基准
+            Path basePath = okFile.getParentFile().toPath();
+
+            // 3.1 校验 DDL
+            if (content.ddl == null || content.ddl.trim().isEmpty()) {
+                throw new RuntimeException("JSON 中缺少 'ddl' 字段");
+            }
+            File ddlFile = resolveFile(basePath, content.ddl);
+            if (!ddlFile.exists()) {
+                throw new RuntimeException("找不到 DDL 文件: " + ddlFile.getAbsolutePath());
+            }
+            String finalDdlPath = ddlFile.getAbsolutePath();
+
+            // 更新表名 (使用 DDL 文件名)
+            String realTableName = ddlFile.getName().replace(".sql", "");
+            qianyi.setTableName(realTableName);
+            qianyi.setDdlFilePath(finalDdlPath);
+
+            // 3.2 校验 CSV 列表
+            if (content.csv == null || content.csv.isEmpty()) {
+                throw new RuntimeException("JSON 中 'csv' 列表为空");
+            }
+
+            List<String> finalCsvPaths = new ArrayList<>();
+            for (String csvRelPath : content.csv) {
+                File csvFile = resolveFile(basePath, csvRelPath);
+                if (!csvFile.exists()) {
+                    throw new RuntimeException("找不到数据文件: " + csvFile.getAbsolutePath());
+                }
+                finalCsvPaths.add(csvFile.getAbsolutePath());
+            }
+
+            // 4. 一切正常，保存主记录
             qianyi.setStatus(BatchStatus.PROCESSING);
+            qianyi.setErrorMsg(null);
             qianyiRepo.save(qianyi);
 
-            // 4. 创建 QianyiDetail (每个 CSV 一个任务)
-            if (content.csv != null) {
-                for (String csvPath : content.csv) {
-                    QianyiDetail detail = new QianyiDetail();
-                    detail.setJobId(qianyi.getJobId());
-                    detail.setQianyiId(qianyi.getId());
-                    detail.setTableName(tableName);
-                    detail.setSourceCsvPath(csvPath);
-                    detail.setStatus(DetailStatus.NEW); // 初始状态
-                    detail.setProgress(0);
-                    detailRepo.save(detail);
-                }
+            // 5. 保存明细记录
+            for (String absCsvPath : finalCsvPaths) {
+                QianyiDetail detail = new QianyiDetail();
+                detail.setJobId(qianyi.getJobId());
+                detail.setQianyiId(qianyi.getId());
+                detail.setTableName(realTableName);
+                detail.setSourceCsvPath(absCsvPath);
+                detail.setStatus(DetailStatus.NEW);
+                detail.setProgress(0);
+                detailRepo.save(detail);
             }
-            
-            log.info("生成批次任务: ID={}, 表={}, 文件数={}", qianyi.getId(), tableName, content.csv.size());
+
+            log.info("任务解析成功: ID={}, 表={}, 文件数={}", qianyi.getId(), realTableName, finalCsvPaths.size());
 
         } catch (Exception e) {
-            log.error("解析OK文件失败: {}", okPath, e);
-            // 这里可以移走坏的ok文件到 error 目录
+            log.error("解析 OK 文件失败 [{}]: {}", okPath, e.getMessage());
+
+            // 6. 异常流程：保存为失败状态
+            qianyi.setStatus(BatchStatus.FAIL_PARSE);
+            qianyi.setErrorMsg(e.getMessage());
+            // 如果 ddlFilePath 还没解析出来，给个默认值防止入库报错(如果是 not null)
+            if (qianyi.getDdlFilePath() == null || qianyi.getDdlFilePath().isEmpty()) {
+                qianyi.setDdlFilePath("UNKNOWN");
+            }
+            qianyiRepo.save(qianyi);
+        }
+    }
+
+    /**
+     * 辅助方法：解析文件路径
+     * 如果是绝对路径，直接返回；如果是相对路径，基于 basePath 拼接
+     */
+    private File resolveFile(Path basePath, String pathStr) {
+        Path p = Paths.get(pathStr);
+        if (p.isAbsolute()) {
+            return p.toFile();
+        } else {
+            return basePath.resolve(pathStr).toFile();
         }
     }
 }

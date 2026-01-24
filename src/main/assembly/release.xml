@@ -42,9 +42,13 @@
         </fileSet>
 
         <fileSet>
-            <directory>src/main/scripts</directory> <outputDirectory>shell</outputDirectory>
+            <directory>src/main/script</directory>
+            <outputDirectory>shell</outputDirectory>
             <fileMode>0755</fileMode>
             <lineEnding>unix</lineEnding>
+            <includes>
+                <include>*.sh</include>
+            </includes>
         </fileSet>
 
         <fileSet>

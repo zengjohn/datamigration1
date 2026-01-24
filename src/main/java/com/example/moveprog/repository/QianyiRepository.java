@@ -24,4 +24,7 @@ public interface QianyiRepository extends JpaRepository<Qianyi, Long> {
      * 用途: MigrationDispatcher 检查 "PROCESSING" 的批次是否已经全部完成
      */
     List<Qianyi> findByStatus(BatchStatus status);
+
+    List<Qianyi> findByJobId(Long jobId);
+
 }

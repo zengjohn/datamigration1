@@ -1,9 +1,0 @@
-{
-  "ddl": "D:/data/ibm_input/t_info.sql",
-  "csv": [
-    "D:/data/ibm_input/t_01.csv",
-    "D:/data/ibm_input/t_02.csv",
-    "D:/data/ibm_input/t_03.csv",
-    "D:/data/ibm_input/t_04.csv"
-  ]
-}

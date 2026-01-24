@@ -176,7 +176,7 @@
 
 <script>
     const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
-    const API_BASE = 'http://localhost:8080/api/migration';
+    const API_BASE = window.location.origin + '/api/migration';
 
     createApp({
         setup() {

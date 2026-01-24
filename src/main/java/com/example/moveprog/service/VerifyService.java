@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -41,7 +42,7 @@ public class VerifyService {
         if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.VERIFYING, null)) return;
 
         try {
-            VerifyStrategy strategy = VerifyStrategy.valueOf(config.getVerify().getStrategy());
+            VerifyStrategy strategy = config.getVerify().getStrategy();
             log.info("    [Verify] 开始校验 Split: {}", splitId);
 
             // 2. 准备基础数据
@@ -51,6 +52,7 @@ public class VerifyService {
 
             doVerifySingleSplit(csvSplit, qianyi.getDdlFilePath(), qianyi.getTableName(), migrationJob, strategy);
 
+
             // 2. 成功提交 -> PASS
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验一致");
 
@@ -58,7 +60,9 @@ public class VerifyService {
             // 【新增】清理磁盘空间
             // 只有 verify 通过了，这个切片文件才真正没用了
             // 现在的流程是：大文件 -> 拆分 -> 小CSV -> 装载 -> 校验 -> 完成。 如果不删除中间的小 CSV 文件，你的磁盘很快就会爆满。 建议：在状态流转为 PASS 后，立即清理文件。
-            // deleteSplitFile(splitId);
+            if(config.getVerify().isDeleteSplitVerifyPass()) {
+                deleteSplitFile(splitId);
+            }
 
             // 4. 【关键】刷新父级 Detail 状态
             QianyiDetail qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
@@ -73,17 +77,28 @@ public class VerifyService {
         }
     }
 
+    private void deleteSplitFile(Long splitId) {
+        String splitFilePath = getSplitFilePath(splitId);
+        File file = new File(splitFilePath);
+        if (file.exists()) {
+            file.delete();
+        }
+    }
+
+    private String getSplitFilePath(Long splitId) {
+        // 结果文件路径: /path/split_100_diff.txt
+        String diffFilePath =  config.getVerify().getVerifyResultBasePath() + "split_" + splitId + "_diff.txt";
+        return diffFilePath;
+    }
+
     /**
      * 单个分片的具体执行逻辑
      * 捕获所有异常，确保不中断主线程的 join
      */
-    private void doVerifySingleSplit(CsvSplit split, String ddlFilePath, String tableName, MigrationJob job, VerifyStrategy strategy) {
+    private void doVerifySingleSplit(CsvSplit split, String ddlFilePath, String tableName, MigrationJob job, VerifyStrategy strategy) throws Exception {
         try {
-            // 设置状态为处理中 (可选，便于UI展示进度)
-            // split.setStatus(CsvSplitStatus.VERIFYING);
-            // splitRepo.save(split);
             // 结果文件路径: /path/split_100_diff.txt
-            String diffFilePath =  config.getVerify().getVerifyResultBasePath() + "split_" + split.getId() + "_diff.txt";
+            String diffFilePath =  getSplitFilePath(split.getId());
 
             String dbUrl = job.getTargetDbUrl();
             String user = job.getTargetDbUser();
@@ -130,7 +145,7 @@ public class VerifyService {
             String msg = e.getMessage();
             split.setErrorMsg(msg != null && msg.length() > 500 ? msg.substring(0, 500) : msg);
             splitRepo.save(split);
-            // 注意：这里吞掉异常，不要抛出，否则 CompletableFuture.join 会报错中断其他任务
+            throw e;
         }
     }
 

@@ -25,7 +25,7 @@ public class CoreComparator {
      * @param dbIter 数据库数据的迭代器
      * @param fileIter 文件数据的迭代器 (无论是 UTF8 还是 IBM1388)
      */
-    public void compareStreams(Long jobId, JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException, SQLException {
+    public void compareStreams(Long jobId, JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException {
         // 1. 获取元数据 (用于打印列名)
         int[] colTypes = dbIter.getColumnTypes();
         String[] colNames = dbIter.getColumnNames();

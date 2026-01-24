@@ -1,8 +1,11 @@
 package com.example.moveprog.config;
 
+import com.example.moveprog.enums.VerifyStrategy;
 import com.univocity.parsers.csv.CsvFormat;
 import com.univocity.parsers.csv.CsvParserSettings;
 import com.univocity.parsers.csv.CsvWriterSettings;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -156,8 +159,10 @@ public class AppProperties {
 
     @Data
     public static class ThreadPool {
-        private int corePoolSize = -1;
-        private int maxPoolSize = -1;
+        @Min(value = 1, message = "核心线程数 core-pool-size 必须大于 0")
+        private int corePoolSize = 2;
+        @Min(value = 1, message = "最大线程数 max-pool-size 必须大于 0")
+        private int maxPoolSize = 4;
     }
 
     /**
@@ -181,7 +186,9 @@ public class AppProperties {
 
     @Data
     public static class Job {
+        @NotNull(message = "输出目录 outputDir 不能为空")
         private String outputDir;
+        @NotNull(message = "错误目录 errorDir 不能为空")
         private String errorDir;
     }
 
@@ -204,9 +211,20 @@ public class AppProperties {
      */
     @Data
     public static class Verify {
-        private String strategy = "USE_SOURCE_FILE";
+        @NotNull(message = "校验策略 strategy 不能为空")
+        private VerifyStrategy strategy = VerifyStrategy.USE_SOURCE_FILE;
+
+        @Min(value = 1, message = "最大差异数 max-diff-count 不能小于 1")
         private int maxDiffCount = 1000;
-        private String verifyResultBasePath = "d:/data/verify_results/";
+
+        @NotNull(message = "验证结果目录不能为空")
+        private String verifyResultBasePath;
+
+        /**
+         * 验证通过后删除拆分文件
+         */
+        private boolean deleteSplitVerifyPass = false;
+
     }
 
 }

@@ -1,0 +1,7 @@
+{
+  "ddl": "/root/mig1/test_data/test_ibm1388.sql",
+  "csv": [
+    "/root/mig1/test_data/test_ibm1388.csv",
+  ]
+}
+

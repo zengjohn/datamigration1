@@ -2,6 +2,8 @@ package com.example.moveprog.repository;
 
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.DetailStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -44,7 +46,11 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
      */
     List<QianyiDetail> findTop5ByStatus(DetailStatus status);
 
+    List<QianyiDetail> findByQianyiId(Long qianyiId);
+
     List<QianyiDetail> findByJobId(Long jobId);
+
+    Page<QianyiDetail> findByJobId(Long jobId, Pageable pageable);
 
     @Modifying
     @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus")

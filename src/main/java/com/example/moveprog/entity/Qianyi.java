@@ -47,6 +47,10 @@ public class Qianyi {
     @Enumerated(EnumType.STRING)
     private BatchStatus status;
 
+    // 【新增】记录解析失败的原因
+    @Column(columnDefinition = "TEXT")
+    private String errorMsg;
+
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
