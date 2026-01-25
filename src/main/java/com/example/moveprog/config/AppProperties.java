@@ -28,7 +28,7 @@ public class AppProperties {
     // 2. 性能/并发相关配置 (对应 app.performance)
     private Performance performance = new Performance();
 
-    private Job job = new Job();
+    private TranscodeJob transcodeJob = new TranscodeJob();
 
     private MigrationThreadPool migrationThreadPool = new MigrationThreadPool();
 
@@ -218,12 +218,22 @@ public class AppProperties {
         private ThreadPool verify = new ThreadPool();
     }
 
+    /**
+     * 转码配置
+     */
     @Data
-    public static class Job {
-        @NotNull(message = "输出目录 outputDir 不能为空")
+    public static class TranscodeJob {
+        @NotNull(message = "转码输出目录 outputDir 不能为空")
         private String outputDir;
-        @NotNull(message = "错误目录 errorDir 不能为空")
+
+        @NotNull(message = "转码错误目录 errorDir 不能为空")
         private String errorDir;
+
+        /**
+         * 最大转码错误行，超过则转码状态变成失败
+         */
+        @Min(value = 1, message = "最大转码失败行 max-error-count 不能小于 1")
+        private int maxErrorCount = 1000;
     }
 
     /**

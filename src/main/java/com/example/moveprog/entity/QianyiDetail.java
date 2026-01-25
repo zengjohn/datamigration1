@@ -3,6 +3,8 @@ package com.example.moveprog.entity;
 import com.example.moveprog.enums.DetailStatus;
 import jakarta.persistence.*;
 import lombok.Data;
+import org.springframework.data.jpa.repository.Modifying;
+
 import java.time.LocalDateTime;
 
 /**
@@ -52,6 +54,9 @@ public class QianyiDetail {
     private String errorMsg;
     
     private Integer progress; // 0-100
+
+    @Column(columnDefinition = "bigint default 0")
+    private Long transcodeErrorCount = 0L; // 新增字段：转码失败行数
 
     private LocalDateTime updateTime;
     @PrePersist @PreUpdate void onUpdate() { updateTime = LocalDateTime.now(); }

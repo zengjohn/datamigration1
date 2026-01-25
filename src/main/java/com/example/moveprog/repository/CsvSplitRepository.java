@@ -32,6 +32,10 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
      */
     void deleteByDetailId(Long detailId);
 
+    @Modifying
+    @Query("DELETE FROM CsvSplit s WHERE s.qianyiId = :qianyiId")
+    void deleteByQianyiId(Long qianyiId);
+
     List<CsvSplit> findTop20ByStatus(CsvSplitStatus status);
 
     List<CsvSplit> findByJobId(Long jobId);

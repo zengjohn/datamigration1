@@ -23,7 +23,7 @@ public class FastEscapeHandler {
         }
 
         StringBuilder out = new StringBuilder(input.length());
-        StringBuilder hexBuffer = new StringBuilder(8); // 用于暂存 Hex 码
+        StringBuilder hexBuffer = new StringBuilder(16); // 用于暂存 Hex 码
         int state = STATE_NORMAL;
 
         for (int i = 0; i < input.length(); i++) {

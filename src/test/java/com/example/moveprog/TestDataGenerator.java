@@ -37,12 +37,12 @@ public class TestDataGenerator {
         String filename = OUT_DIR + "/test_ibm1388.csv";
         // 1. 模拟数据：包含普通中文、英文、以及"生僻字转义符"(测试 Tunneling 功能)
         // 对应 FastEscapeHandler 的逻辑: \2CC56\ 会被还原
-        String content = "user_id,user_name,balance\n" +
-                "1001,张三,100.00\n" +
-                "1002,李四_普通,200.50\n" +
-                "1003,王\\2CC56\\五,888.88"; // 测试转义: \2CC56\
-
-        writeWithEncoding(filename, content, CHARSET_IBM);
+        StringBuilder content = new StringBuilder();
+        content.append("1001,张三,100.00").append("\r\n");
+        content.append("1002,李四_普通,200.50").append("\r\n");
+        content.append("1003,王\\2CC56\\五,888.88").append("\r\n");
+        content.append("1004,赵\\0002CC56\\六,999.99"); // 带前导零
+        writeWithEncoding(filename, content.toString(), CHARSET_IBM);
         System.out.println("[A] 基础编码文件生成: " + filename);
     }
 
@@ -53,7 +53,7 @@ public class TestDataGenerator {
         String filename = OUT_DIR + "/A_Basic_Encoding.csv";
         // 包含：英文、普通中文、数字
         StringBuilder sb = new StringBuilder();
-        sb.append("user_id,user_name,balance\n");
+        //sb.append("user_id,user_name,balance\n");
         sb.append("A001,John Doe,100.00\n");
         sb.append("A002,张三_测试,200.50\n");
         sb.append("A003,李四_End,999.99");
@@ -68,7 +68,7 @@ public class TestDataGenerator {
     private static void generateCategoryB_CsvFormat() throws IOException {
         String filename = OUT_DIR + "/B_Csv_Format_Edge.csv";
         StringBuilder sb = new StringBuilder();
-        sb.append("user_id,user_name,balance\n");
+        //sb.append("user_id,user_name,balance\n");
 
         // 1. 字段含分隔符 (需引号包裹)
         sb.append("B001,\"Doe, John\",100.00\n");
@@ -97,7 +97,7 @@ public class TestDataGenerator {
     private static void generateCategoryC_BusinessRules() throws IOException {
         String filename = OUT_DIR + "/C_Business_Rules.csv";
         StringBuilder sb = new StringBuilder();
-        sb.append("user_id,user_name,balance\n");
+        //sb.append("user_id,user_name,balance\n");
 
         // 1. 金额极值
         sb.append("C001,Max_Value,9999999999.99\n");
@@ -123,7 +123,7 @@ public class TestDataGenerator {
         try (BufferedWriter writer = new BufferedWriter(
                 new OutputStreamWriter(new FileOutputStream(filename), CHARSET_IBM))) {
 
-            writer.write("user_id,user_name,balance\n");
+            //writer.write("user_id,user_name,balance\n");
             Random rand = new Random();
 
             for (int i = 0; i < rows; i++) {
@@ -143,7 +143,7 @@ public class TestDataGenerator {
         // E1. 错误编码混杂 (IBM1388 中混入 UTF-8)
         File f1 = new File(OUT_DIR + "/E1_Mixed_Encoding.csv");
         try (FileOutputStream fos = new FileOutputStream(f1)) {
-            fos.write("user_id,user_name,balance\n".getBytes(CHARSET_IBM));
+            //fos.write("user_id,user_name,balance\n".getBytes(CHARSET_IBM));
             fos.write("E001,正常IBM1388,100\n".getBytes(CHARSET_IBM));
             fos.write("E002,我是UTF8乱入,200\n".getBytes(CHARSET_UTF8)); // 这里会产生乱码
             fos.write("E003,正常IBM1388,300\n".getBytes(CHARSET_IBM));
@@ -152,7 +152,7 @@ public class TestDataGenerator {
         // E2. 错误引号 (Unclosed Quote) - 导致解析器吞掉后续所有行
         String f2 = OUT_DIR + "/E2_Unclosed_Quote.csv";
         StringBuilder sb = new StringBuilder();
-        sb.append("user_id,user_name,balance\n");
+        //sb.append("user_id,user_name,balance\n");
         sb.append("E004,\"Unclosed Quote Start,100.00\n"); // 缺右引号
         sb.append("E005,Should_Be_Swallowed,200.00\n");
         writeWithEncoding(f2, sb.toString(), CHARSET_IBM);
@@ -160,7 +160,7 @@ public class TestDataGenerator {
         // E3. 文件截断 (写入一半突然结束)
         File f3 = new File(OUT_DIR + "/E3_Truncated.csv");
         try (FileOutputStream fos = new FileOutputStream(f3)) {
-            fos.write("user_id,user_name,bal".getBytes(CHARSET_IBM)); // Header都没写完
+            fos.write("E004,我".getBytes(CHARSET_IBM));
         }
 
         System.out.println("[E] 异常容错文件生成: E1, E2, E3");
@@ -172,7 +172,7 @@ public class TestDataGenerator {
     private static void generateCategoryF_Tunneling() throws IOException {
         String filename = OUT_DIR + "/F_Tunneling_Handler.csv";
         StringBuilder sb = new StringBuilder();
-        sb.append("user_id,user_name,balance\n");
+        //sb.append("user_id,user_name,balance\n");
 
         // 1. 标准生僻字转义 (假设 \2CC56\ 代表一个生僻字)
         // 期望：入库后不再包含 \2CC56\，而是对应的 Unicode 字符(如果转换支持) 或 保持原样(取决于配置)

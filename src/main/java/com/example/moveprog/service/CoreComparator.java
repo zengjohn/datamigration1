@@ -14,6 +14,10 @@ import java.sql.Types;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
+/**
+ * 核心比对器 - 修复版
+ * 职责：执行具体的行级比对，发现不一致调用 Writer 记录
+ */
 @Slf4j
 @Component
 public class CoreComparator {
@@ -22,129 +26,169 @@ public class CoreComparator {
 
     /**
      * 核心比对方法 (纯逻辑，不涉及 IO 细节)
+     * 执行比对流
      * @param dbIter 数据库数据的迭代器
      * @param fileIter 文件数据的迭代器 (无论是 UTF8 还是 IBM1388)
+     * @return 返回本次比对发现的差异行数 (用于双重校验)
      */
-    public void compareStreams(Long jobId, JdbcRowIterator dbIter, CloseableRowIterator<String> fileIter, VerifyDiffWriter diffWriter) throws IOException {
+    public long compareStreams(Long jobId, CloseableRowIterator<String> fileIter, JdbcRowIterator dbIter, VerifyDiffWriter diffWriter) throws IOException {
         // 1. 获取元数据 (用于打印列名)
         int[] colTypes = dbIter.getColumnTypes();
         String[] colNames = dbIter.getColumnNames();
 
-        // 2. 初始化缓存行
-        Object[] dbRow = dbIter.hasNext() ? dbIter.next() : null;
+        // 用于统计处理的行数（日志用）
+        long processedRows = 0;
+
+        // 2. 初始化缓存行(双指针遍历)
         String[] fileRow = fileIter.hasNext() ? fileIter.next() : null;
+        Object[] dbRow = dbIter.hasNext() ? dbIter.next() : null;
 
         try {
-            int count = 0;
             while (dbRow != null || fileRow != null) {
+                processedRows++;
+
                 // 【埋点】每处理 1000 行检查一次
                 // 没必要每行都查，太浪费性能；也没必要查太少，响应太慢
-                if (count++ % 1000 == 0) {
+                if (processedRows % 1000 == 0) {
                     jobControlManager.checkJobState(jobId);
                 }
 
                 // 获取行号 (假设行号在数组最后一位)
                 // 注意：需要处理 Long 类型转换
-                Long dbRowNo = getRowNo(dbRow);
                 Long fileRowNo = getRowNo(fileRow);
-
-                if (dbRowNo == null && fileRowNo == null) break; // 双双结束
+                Long dbRowNo = getRowNo(dbRow);
 
                 // === Case 1: 源端存在，目标端不存在 (File 有, DB 没有) ===
                 // 此时 fileRowNo < dbRowNo (或者 DB 已经读完了)
                 if (dbRowNo == null || (fileRowNo != null && fileRowNo < dbRowNo)) {
                     // 源端 !{行号}, 目标端null
-                    String msg = String.format("源端 !{%d}, 目标端 null", fileRowNo);
+                    String msg = String.format("CSV !{%d}, DB: null", fileRowNo);
                     diffWriter.writeDiff(msg);
 
                     // File 指针后移，DB 不动
                     fileRow = fileIter.hasNext() ? fileIter.next() : null;
+                    continue;
                 }
 
                 // === Case 2: 源端不存在，目标端存在 (DB 有, File 没有) ===
                 // 此时 dbRowNo < fileRowNo (或者 File 已经读完了)
                 else if (fileRowNo == null || (dbRowNo != null && dbRowNo < fileRowNo)) {
                     // 源端 null, 目标端 !{行号}
-                    String msg = String.format("源端 null, 目标端 !{%d}", dbRowNo);
+                    String msg = String.format("CSV: null, DB: !{%d}", dbRowNo);
                     diffWriter.writeDiff(msg);
 
                     // DB 指针后移，File 不动
                     dbRow = dbIter.hasNext() ? dbIter.next() : null;
+                    continue;
                 }
 
                 // === Case 3: 两端都存在，比较内容 ===
                 else {
-                    // 行号相等，开始比对字段
-                    String diffContent = checkContentDiff(dbRow, fileRow, colTypes, colNames, dbRowNo);
-                    if (diffContent != null) {
-                        diffWriter.writeDiff(diffContent);
+                    // 3. 行号一致，比对内容
+                    // 核心修复：isRowEqual 返回 false 时才去拼接字符串，极大提升性能
+                    if (!isRowEqual(dbRow, fileRow, colTypes)) {
+                        String diffMsg = formatDiffDetail(dbRow, fileRow, colTypes, colNames, dbRowNo);
+                        diffWriter.writeDiff(diffMsg);
                     }
 
-                    // 两个指针都后移
+                    // 4. 两个指针都后移
                     dbRow = dbIter.hasNext() ? dbIter.next() : null;
                     fileRow = fileIter.hasNext() ? fileIter.next() : null;
                 }
             }
-        } catch (JobStoppedException e) {
+
+            return diffWriter.getDiffCount().get();
+        } catch (JobStoppedException | VerifyDiffWriter.DiffLimitExceededException e) {
             // 【特殊处理】用户叫停
             log.warn("任务被中断: {}", e.getMessage());
             // 此时应该把状态重置回 NEW，或者保持 TRANSCODING 等待下次“启动修复”
             // 建议：不做处理，直接 return。因为下次启动时的 StartupTaskResetter 会负责把 TRANSCODING 重置为 NEW
-            return;
-        } catch (VerifyDiffWriter.DiffLimitExceededException e) {
-            log.warn("比对差异过多，提前终止: {}", e.getMessage());
-            // 这里不抛出异常，视为正常截断，方便 Service 层处理后续状态
+            return -1;
         }
+
     }
 
     /**
-     * 比对具体内容
-     * 返回 null 表示无差异，返回字符串表示差异信息
+     * 快速比对行（不生成垃圾对象）
      */
-    private String checkContentDiff(Object[] dbRow, String[] fileRow, int[] colTypes, String[] colNames, Long rowNo) {
-        // 减1是因为最后一列是行号，不参与业务数据比对
-        int compareLen = Math.min(dbRow.length, fileRow.length) - 1;
+    private boolean isRowEqual(Object[] dbRow, String[] fileRow, int[] colTypes) {
+        // 注意：dbRow 和 fileRow 长度可能包含 row_no，比对时要排除最后一列
+        int len = Math.min(dbRow.length, fileRow.length) - 1;
 
-        StringBuilder srcSb = new StringBuilder();
-        StringBuilder tgtSb = new StringBuilder();
-        boolean hasDiff = false;
-
-        for (int i = 0; i < compareLen; i++) {
-            Object dbVal = dbRow[i];
-            String fileVal = fileRow[i];
-            int type = colTypes[i];
-
-            // 格式化输出 (用于拼接结果)
-            String colName = colNames[i];
-            String dbValStr = String.valueOf(dbVal);
-            String fileValStr = (fileVal == null) ? "null" : fileVal;
-
-            if (!isCellEqual(dbVal, fileVal, type)) {
-                hasDiff = true;
-                // 发现差异，拼接详细信息
-                // 格式: user_name: 源值(csv), 目标值(db) ???
-                // 用户要求: src: user_id: val, balance: val ... tgt: ...
-                // 这里我们先把所有字段拼起来，最后再组装
+        for (int i = 0; i < len; i++) {
+            if (!isCellEqual(dbRow[i], fileRow[i], colTypes[i])) {
+                return false;
             }
-
-            // 无论是否有差异，都按用户要求的格式拼装数据以便查看
-            if (i > 0) {
-                srcSb.append(", ");
-                tgtSb.append(", ");
-            }
-            srcSb.append(colName).append(": ").append(fileValStr);
-            tgtSb.append(colName).append(": ").append(dbValStr);
         }
-
-        if (hasDiff) {
-            // 源端 @{行号} src: ..., tgt: ...
-            return String.format("源端 @{%d} src: %s, tgt: %s", rowNo, srcSb.toString(), tgtSb.toString());
-        }
-        return null;
+        return true;
     }
+
+    /**
+     * 单元格比对（增强健壮性）
+     */
+    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+        // 1. 空值处理
+        boolean dbNull = (dbVal == null);
+        boolean fileNull = (fileStr == null || fileStr.isEmpty() || "null".equalsIgnoreCase(fileStr));
+
+        if (dbNull && fileNull) return true;
+        if (dbNull || fileNull) return false;
+
+        String dbStr = String.valueOf(dbVal);
+        String csvVal = fileStr.trim(); // CSV 读取通常需要 trim
+
+        switch (sqlType) {
+            case Types.CHAR:
+            case Types.VARCHAR:
+            case Types.LONGVARCHAR:
+                // 数据库取出的定长 CHAR 可能带空格，需要 trim
+                return dbStr.trim().equals(csvVal);
+
+            case Types.NUMERIC:
+            case Types.DECIMAL:
+            case Types.DOUBLE:
+            case Types.FLOAT:
+                // 【核心修复】数值比较使用 BigDecimal，解决 1.00 != 1.0 的问题
+                try {
+                    BigDecimal d1 = new BigDecimal(dbStr);
+                    BigDecimal d2 = new BigDecimal(csvVal);
+                    return d1.compareTo(d2) == 0;
+                } catch (Exception e) {
+                    return false;
+                }
+
+            case Types.TIMESTAMP:
+            case Types.DATE:
+                // 时间比较建议归一化为字符串或 Timestamp 对象
+                // 简单处理：截取前19位 (yyyy-MM-dd HH:mm:ss) 忽略毫秒差异，视业务需求而定
+                if (dbStr.length() > 19) dbStr = dbStr.substring(0, 19);
+                if (csvVal.length() > 19) csvVal = csvVal.substring(0, 19);
+                return dbStr.equals(csvVal);
+
+            default:
+                return dbStr.equals(csvVal);
+        }
+    }
+
+    private String formatDiffDetail(Object[] dbRow, String[] fileRow, int[] types, String[] names, Long rowNo) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("差异行 @").append(rowNo).append(": ");
+        int len = Math.min(dbRow.length, fileRow.length) - 1;
+
+        for (int i = 0; i < len; i++) {
+            if (!isCellEqual(dbRow[i], fileRow[i], types[i])) {
+                sb.append("[").append(names[i]).append("] ")
+                        .append("CSV:'").append(fileRow[i]).append("' != ")
+                        .append("DB:'").append(dbRow[i]).append("'; ");
+            }
+        }
+        return sb.toString();
+    }
+
 
     // 辅助：获取数组最后一个元素作为行号
     private Long getRowNo(Object row) {
+        // 如果某一边为 null，行号设为 MAX_VALUE 以便进入后续的判断分支
         if (row == null) return null;
         if (row instanceof Object[]) {
             Object[] arr = (Object[]) row;
@@ -159,7 +203,7 @@ public class CoreComparator {
     }
 
     // 有时间时在将下面的按类型比对合并进来
-    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+    private boolean isCellEqual_x1(Object dbVal, String fileStr, int sqlType) {
         // 1. 处理 NULL
         if (dbVal == null) {
             return fileStr == null || fileStr.trim().isEmpty();

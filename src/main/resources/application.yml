@@ -94,10 +94,11 @@ app:
       core-pool-size: 5
       max-pool-size: 10
 
-  # 路径配置 (保留之前的)
-  job:
+  # 验证配置 (保留之前的)
+  transcode-job:
     output-dir: /data/moveprog/output_split/
     error-dir: /data/moveprog/output_error/
+    max-error-count: 1000
 
   load-jdbc:
     pre-sql-list:
@@ -109,8 +110,8 @@ app:
 
   verify:
     strategy: USE_SOURCE_FILE
-    max-diff-count: 1000
     verify-result-base-path: /data/moveprog/verify_result
+    max-diff-count: 1000
 
 logging:
   level:

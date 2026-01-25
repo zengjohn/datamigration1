@@ -3,309 +3,494 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>数据迁移运维控制台 V2.0</title>
+    <title>数据迁移运维控制台 V3.0</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+
     <style>
-        body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 0.9rem;}
-        .card { box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: none; margin-bottom: 20px; }
-        .card-header { font-weight: 600; background-color: #fff; border-bottom: 1px solid #eee;}
+        :root { --sidebar-width: 280px; }
+        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 0.9rem; overflow-x: hidden;}
+
+        /* 布局调整 */
+        .main-container { height: 100vh; display: flex; flex-direction: column; }
+        .content-area { flex: 1; overflow: hidden; display: flex; }
+        .sidebar { width: var(--sidebar-width); border-right: 1px solid #dee2e6; background: white; display: flex; flex-direction: column; }
+        .workspace { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
+
+        /* 卡片优化 */
+        .card { box-shadow: 0 2px 6px rgba(0,0,0,0.04); border: 1px solid #e9ecef; }
+        .card-header { background-color: #fff; font-weight: 600; border-bottom: 2px solid #f1f3f5; padding: 0.75rem 1rem;}
+
+        /* 表格样式 */
+        .table-hover tbody tr:hover { background-color: #f8f9fa; }
         .cursor-pointer { cursor: pointer; }
-        .hover-row:hover { background-color: #f8f9fa !important; }
-        .selected-row { background-color: #e2e6ea !important; border-left: 4px solid #0d6efd; }
+        .selected-row { background-color: #e7f1ff !important; border-left: 3px solid #0d6efd; }
 
-        /* 弹窗样式 */
-        .modal-overlay {
+        /* 状态徽章 */
+        .badge { font-weight: 500; letter-spacing: 0.3px; }
+
+        /* 右侧抽屉 (Drawer) */
+        .drawer-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1050;
+            background: rgba(0,0,0,0.3); z-index: 1040;
         }
-        .modal-card-lg { width: 90%; max-width: 1200px; max-height: 90vh; display: flex; flex-direction: column; }
-        .modal-card-sm { width: 90%; max-width: 500px; background: white; border-radius: 8px; overflow: hidden;}
-        .modal-body-scroll { overflow-y: auto; flex: 1; }
+        .drawer {
+            position: fixed; top: 0; right: 0; height: 100%; width: 600px;
+            background: white; box-shadow: -4px 0 10px rgba(0,0,0,0.1);
+            z-index: 1050; transition: transform 0.3s ease-in-out;
+            transform: translateX(100%); display: flex; flex-direction: column;
+        }
+        .drawer.open { transform: translateX(0); }
+        .drawer-header { padding: 1rem; border-bottom: 1px solid #dee2e6; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa;}
+        .drawer-body { flex: 1; overflow-y: auto; padding: 0; }
 
-        /* 差异显示区 */
-        .diff-viewer { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow: auto;}
+        /* 差异查看器 */
+        .diff-modal { max-width: 900px; }
+        .diff-content {
+            background: #2b2b2b; color: #f8f8f2; padding: 1rem;
+            border-radius: 4px; font-family: 'Consolas', monospace;
+            white-space: pre-wrap; font-size: 0.85rem; max-height: 60vh; overflow: auto;
+        }
     </style>
 </head>
 <body>
 
-<div id="app" class="container-fluid p-3">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h4 class="mb-0">🚀 数据迁移运维控制台</h4>
-        <div class="d-flex align-items-center gap-2">
-            <button class="btn btn-primary btn-sm" @click="openCreateModal">+ 新建作业</button>
-            <div class="form-check form-switch ms-3">
+<div id="app" class="main-container">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary px-3 shadow-sm" style="height: 56px;">
+        <span class="navbar-brand mb-0 h1"><i class="bi bi-hdd-network me-2"></i>数据迁移运维控制台</span>
+        <div class="ms-auto d-flex align-items-center gap-3">
+            <div class="form-check form-switch text-white">
                 <input class="form-check-input" type="checkbox" v-model="autoRefresh" id="refreshSwitch">
-                <label class="form-check-label small" for="refreshSwitch">自动刷新 (3s)</label>
+                <label class="form-check-label small" for="refreshSwitch">自动刷新</label>
+            </div>
+            <button class="btn btn-sm btn-light text-primary fw-bold" @click="openCreateModal">
+                <i class="bi bi-plus-lg"></i> 新建作业
+            </button>
+        </div>
+    </nav>
+
+    <div class="content-area">
+        <div class="sidebar">
+            <div class="p-3 border-bottom bg-light">
+                <input type="text" class="form-control form-control-sm" placeholder="🔍 搜索作业..." v-model="jobSearch">
+            </div>
+            <div class="flex-grow-1 overflow-auto">
+                <div v-if="loadingJobs" class="text-center p-3 text-muted">加载中...</div>
+                <div class="list-group list-group-flush">
+                    <a href="#" v-for="job in filteredJobs" :key="job.id"
+                       class="list-group-item list-group-item-action py-3"
+                       :class="{'selected-row': selectedJob?.id === job.id}"
+                       @click="selectJob(job)">
+                        <div class="d-flex w-100 justify-content-between mb-1">
+                            <strong class="text-truncate" style="max-width: 160px;" :title="job.name">{{ job.name }}</strong>
+                            <span :class="getStatusClass(job.status)" class="badge-sm">{{ job.status }}</span>
+                        </div>
+                        <div class="small text-muted text-truncate" :title="job.sourceDirectory">
+                            <i class="bi bi-folder2-open me-1"></i>{{ job.sourceDirectory }}
+                        </div>
+                        <div class="mt-2" v-if="selectedJob?.id === job.id">
+                            <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')" class="btn btn-outline-danger btn-xs w-100" style="font-size: 0.75rem;">停止作业</button>
+                            <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')" class="btn btn-outline-success btn-xs w-100" style="font-size: 0.75rem;">恢复作业</button>
+                        </div>
+                    </a>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div class="row g-3">
-        <div class="col-md-3">
-            <div class="card h-100">
-                <div class="card-header text-primary">作业列表</div>
-                <div class="card-body p-0 table-responsive">
-                    <table class="table table-hover mb-0 align-middle">
-                        <thead class="table-light"><tr><th>名称/目录</th><th>状态</th></tr></thead>
-                        <tbody>
-                        <tr v-for="job in jobs" :key="job.id" @click="selectJob(job)" class="cursor-pointer hover-row" :class="{ 'selected-row': selectedJob?.id === job.id }">
-                            <td>
-                                <div class="fw-bold text-truncate" style="max-width: 180px;">{{ job.name }}</div>
-                                <div class="small text-muted text-truncate" style="max-width: 180px;" :title="job.sourceDirectory">{{ job.sourceDirectory }}</div>
-                            </td>
-                            <td>
-                                <span :class="getStatusClass(job.status)" class="me-1">{{ job.status }}</span>
-                                <div class="mt-1" v-if="selectedJob?.id === job.id">
-                                    <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')" class="btn btn-danger btn-xs" style="font-size:10px; padding: 1px 4px;">停止</button>
-                                    <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')" class="btn btn-success btn-xs" style="font-size:10px; padding: 1px 4px;">恢复</button>
-                                </div>
-                            </td>
-                        </tr>
-                        </tbody>
-                    </table>
-                </div>
+        <div class="workspace">
+
+            <div v-if="!selectedJob" class="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
+                <i class="bi bi-arrow-left-circle display-4 mb-3"></i>
+                <h5>请从左侧选择一个迁移作业</h5>
             </div>
-        </div>
 
-        <div class="col-md-9">
-            <div class="card h-100" v-if="selectedJob">
-                <div class="card-header d-flex justify-content-between align-items-center py-2">
-                    <ul class="nav nav-pills card-header-pills">
-                        <li class="nav-item">
-                            <a class="nav-link" :class="{active: currentTab==='batch'}" href="#" @click.prevent="currentTab='batch'">OK文件/批次</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" :class="{active: currentTab==='file'}" href="#" @click.prevent="currentTab='file'">CSV文件明细</a>
-                        </li>
-                    </ul>
-                    <button class="btn btn-sm btn-light border" @click="refreshCurrentTab">🔄</button>
-                </div>
-
-                <div class="card-body p-0" v-if="currentTab === 'batch'">
-                    <table class="table table-hover mb-0 align-middle">
-                        <thead class="table-light"><tr><th>ID</th><th>OK文件路径</th><th>表名</th><th>状态</th><th>错误信息</th><th>操作</th></tr></thead>
-                        <tbody>
-                        <tr v-for="b in batches" :key="b.id">
-                            <td>{{ b.id }}</td>
-                            <td class="small text-muted">{{ b.okFilePath }}</td>
-                            <td>{{ b.tableName }}</td>
-                            <td><span :class="getStatusClass(b.status)">{{ b.status }}</span></td>
-                            <td class="text-danger small">{{ b.errorMsg }}</td>
-                            <td>
-                                <button v-if="b.status === 'FAIL_PARSE'" @click="retryBatch(b)" class="btn btn-warning btn-sm btn-xs">重试OK</button>
-                            </td>
-                        </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="card-body p-0 d-flex flex-column" v-if="currentTab === 'file'">
-                    <div class="table-responsive flex-grow-1">
-                        <table class="table table-hover mb-0 align-middle">
-                            <thead class="table-light"><tr><th>ID</th><th>源CSV</th><th>状态</th><th>进度</th><th>更新时间</th><th>操作</th></tr></thead>
+            <template v-else>
+                <div class="card flex-shrink-0" style="max-height: 45%;">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-collection me-2"></i>批次列表 (OK文件)</span>
+                        <button class="btn btn-sm btn-outline-secondary" @click="fetchBatches"><i class="bi bi-arrow-clockwise"></i></button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0 align-middle">
+                            <thead class="table-light sticky-top">
+                            <tr>
+                                <th>ID</th><th>OK文件名</th><th>目标表</th><th>状态</th><th>操作</th>
+                            </tr>
+                            </thead>
                             <tbody>
-                            <tr v-for="d in details.content" :key="d.id">
+                            <tr v-for="b in batches" :key="b.id"
+                                @click="selectBatch(b)"
+                                class="cursor-pointer"
+                                :class="{'selected-row': selectedBatch?.id === b.id}">
+                                <td>{{ b.id }}</td>
+                                <td>
+                                    <div class="fw-bold">{{ getFileName(b.okFilePath) }}</div>
+                                    <div class="small text-muted" style="font-size: 0.75rem;">{{ b.okFilePath }}</div>
+                                </td>
+                                <td>{{ b.tableName }}</td>
+                                <td>
+                                    <span :class="getStatusClass(b.status)">{{ b.status }}</span>
+                                    <div v-if="b.errorMsg" class="text-danger small mt-1 text-truncate" style="max-width: 200px;" :title="b.errorMsg">{{ b.errorMsg }}</div>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button v-if="b.status === 'FAIL_PARSE'" @click.stop="retryBatch(b)" class="btn btn-warning" title="重试解析"><i class="bi bi-arrow-repeat"></i></button>
+                                        <button v-if="b.status !== 'FINISHED'" @click.stop="closeBatch(b)" class="btn btn-success" title="强制结单"><i class="bi bi-check-circle"></i></button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr v-if="batches.length === 0"><td colspan="5" class="text-center p-3 text-muted">暂无批次数据</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card flex-grow-1 d-flex flex-column" v-if="selectedBatch">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+                        <span>
+                            <i class="bi bi-file-earmark-spreadsheet me-2"></i>文件明细
+                            <span class="badge bg-secondary ms-2">{{ selectedBatch.tableName }}</span>
+                        </span>
+                        <div>
+                            <span class="small text-muted me-3">第 {{ pageConfig.page + 1 }} / {{ detailsData.totalPages }} 页</span>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" :disabled="detailsData.first" @click="changePage(-1)">上一页</button>
+                                <button class="btn btn-outline-secondary" :disabled="detailsData.last" @click="changePage(1)">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-responsive flex-grow-1">
+                        <table class="table table-hover table-sm mb-0 align-middle">
+                            <thead class="table-light">
+                            <tr><th>ID</th><th>源CSV路径</th><th>状态</th><th>进度</th><th>失败行数</th><th>更新时间</th><th>操作</th></tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="d in detailsData.content" :key="d.id">
                                 <td>{{ d.id }}</td>
                                 <td class="small">{{ d.sourceCsvPath }}</td>
                                 <td><span :class="getStatusClass(d.status)">{{ d.status }}</span></td>
                                 <td>
-                                    <div class="progress" style="height: 5px; width: 60px;">
-                                        <div class="progress-bar" :style="{width: (d.progress||0)+'%'}"></div>
+                                    <div class="progress" style="height: 6px; width: 80px;">
+                                        <div class="progress-bar" :class="d.progress===100?'bg-success':'bg-primary'" :style="{width: (d.progress||0)+'%'}"></div>
                                     </div>
+                                </td>
+                                <td>
+                                    <div v-if="d.transcodeErrorCount > 0" class="d-flex align-items-center text-danger fw-bold">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                        {{ d.transcodeErrorCount }}
+                                        <button class="btn btn-link btn-sm text-danger p-0 ms-2 text-decoration-none"
+                                                @click.stop="viewBadFile(d)" title="查看失败内容">
+                                            [查看]
+                                        </button>
+                                    </div>
+                                    <span v-else class="text-muted">-</span>
                                 </td>
                                 <td class="small text-muted">{{ formatTime(d.updateTime) }}</td>
                                 <td>
-                                    <button @click="openSplits(d)" class="btn btn-outline-primary btn-sm py-0 me-1">切片</button>
-                                    <button v-if="d.status === 'FAIL_TRANSCODE'" @click="retryTranscode(d)" class="btn btn-warning btn-sm py-0">重试转码</button>
+                                    <button @click="openSplits(d)" class="btn btn-outline-primary btn-sm py-0 me-1">切片监控</button>
+                                    <button v-if="d.status === 'FAIL_TRANSCODE'" @click="retryTranscode(d)" class="btn btn-outline-warning btn-sm py-0">重试转码</button>
                                 </td>
                             </tr>
+                            <tr v-if="detailsData.content.length === 0"><td colspan="6" class="text-center p-4 text-muted">该批次下无 CSV 文件</td></tr>
                             </tbody>
                         </table>
                     </div>
-                    <div class="card-footer py-2">
-                        <nav class="d-flex justify-content-between align-items-center">
-                            <span class="small text-muted">共 {{ details.totalElements }} 条，当前 {{ details.number + 1 }}/{{ details.totalPages }} 页</span>
-                            <ul class="pagination pagination-sm mb-0">
-                                <li class="page-item" :class="{disabled: details.first}">
-                                    <button class="page-link" @click="changePage(details.number - 1)">上一页</button>
-                                </li>
-                                <li class="page-item" :class="{disabled: details.last}">
-                                    <button class="page-link" @click="changePage(details.number + 1)">下一页</button>
-                                </li>
-                            </ul>
-                        </nav>
+                </div>
+                <div class="card flex-grow-1 d-flex align-items-center justify-content-center text-muted" v-else>
+                    <div class="text-center">
+                        <i class="bi bi-arrow-up-circle display-6"></i>
+                        <p class="mt-2">请点击上方的批次以查看明细</p>
                     </div>
                 </div>
-            </div>
 
-            <div class="card h-100 d-flex align-items-center justify-content-center text-muted" v-else>
-                <div class="text-center">
-                    <h3>👈</h3>
-                    <p>请先从左侧选择一个作业</p>
+            </template>
+        </div>
+    </div>
+
+    <div class="drawer-overlay" v-if="showSplitDrawer" @click="showSplitDrawer = false"></div>
+    <div class="drawer" :class="{open: showSplitDrawer}">
+        <div class="drawer-header">
+            <h5 class="mb-0 text-truncate" :title="selectedDetail?.sourceCsvPath">
+                <i class="bi bi-layers me-2"></i>切片详情
+            </h5>
+            <button type="button" class="btn-close" @click="showSplitDrawer = false"></button>
+        </div>
+        <div class="drawer-body p-0">
+            <div class="alert alert-light border-bottom mb-0 small text-muted">
+                <i class="bi bi-info-circle me-1"></i> 源文件: {{ getFileName(selectedDetail?.sourceCsvPath) }}
+            </div>
+            <table class="table table-striped table-hover table-sm mb-0 small align-middle">
+                <thead class="table-light sticky-top">
+                <tr><th>ID</th><th>切片名</th><th>状态/错误</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                <tr v-for="s in splits" :key="s.id">
+                    <td>{{ s.id }}</td>
+                    <td>{{ getFileName(s.splitFilePath) }}</td>
+                    <td>
+                        <div :class="getStatusClass(s.status)" class="badge mb-1">{{ s.status }}</div>
+                        <div v-if="s.errorMsg" class="text-danger text-break" style="font-size: 0.75rem; line-height: 1.2;">{{ s.errorMsg }}</div>
+                    </td>
+                    <td>
+                        <button v-if="s.status === 'FAIL_LOAD'"
+                                @click="retrySplit(s)"
+                                class="btn btn-warning btn-xs w-100 mb-1">
+                            <i class="bi bi-arrow-repeat"></i> 重试加载
+                        </button>
+
+                        <div v-if="s.status === 'FAIL_VERIFY'" class="d-flex gap-1 mb-1">
+                            <button @click="reVerifySplit(s)"
+                                    class="btn btn-info btn-xs flex-grow-1" title="仅重新运行比对">
+                                重验
+                            </button>
+                            <button @click="retrySplit(s)"
+                                    class="btn btn-outline-warning btn-xs" title="删除数据重新装载">
+                                重载
+                            </button>
+                        </div>
+
+                        <button v-if="s.status === 'PASS'"
+                                @click="reVerifySplit(s)"
+                                class="btn btn-outline-secondary btn-xs w-100 mb-1">
+                            <i class="bi bi-search"></i> 复核
+                        </button>
+
+                        <button v-if="s.status === 'FAIL_VERIFY'"
+                                @click="viewDiff(s)"
+                                class="btn btn-danger btn-xs w-100">
+                            查看差异
+                        </button>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="modal fade show" v-if="showDiffModal" style="display: block; background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-centered diff-modal">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title fs-6">⚖️ 数据比对差异 (Top 200 行)</h5>
+                    <button type="button" class="btn-close" @click="showDiffModal = false"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div class="diff-content">{{ diffContent }}</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div v-if="showCreateJobModal" class="modal-overlay" @click.self="showCreateJobModal = false">
-        <div class="modal-card-sm p-4">
-            <h5 class="mb-3">新建迁移作业</h5>
-            <form @submit.prevent="submitCreateJob">
-                <div class="mb-3">
-                    <label class="form-label small">作业名称</label>
-                    <input v-model="newJob.name" type="text" class="form-control" required>
+    <div class="modal fade show" v-if="showCreateJobModal" style="display: block; background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">新建迁移作业</h5>
+                    <button type="button" class="btn-close" @click="showCreateJobModal = false"></button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label small">监控源目录</label>
-                    <input v-model="newJob.sourceDirectory" type="text" class="form-control" required>
+                <div class="modal-body">
+                    <form @submit.prevent="submitCreateJob">
+                        <div class="mb-3">
+                            <label class="form-label small">作业名称</label>
+                            <input v-model="newJob.name" type="text" class="form-control" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">监控源目录</label>
+                            <input v-model="newJob.sourceDirectory" type="text" class="form-control" placeholder="/data/..." required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标数据库 JDBC URL</label>
+                            <input v-model="newJob.targetDbUrl" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col">
+                                <label class="form-label small">用户</label>
+                                <input v-model="newJob.targetDbUser" type="text" class="form-control form-control-sm">
+                            </div>
+                            <div class="col">
+                                <label class="form-label small">密码</label>
+                                <input v-model="newJob.targetDbPass" type="password" class="form-control form-control-sm">
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <button type="button" class="btn btn-light me-2" @click="showCreateJobModal = false">取消</button>
+                            <button type="submit" class="btn btn-primary">提交</button>
+                        </div>
+                    </form>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label small">JDBC URL</label>
-                    <input v-model="newJob.targetDbUrl" type="text" class="form-control form-control-sm">
-                </div>
-                <div class="row mb-4">
-                    <div class="col">
-                        <label class="form-label small">用户</label>
-                        <input v-model="newJob.targetDbUser" type="text" class="form-control form-control-sm">
-                    </div>
-                    <div class="col">
-                        <label class="form-label small">密码</label>
-                        <input v-model="newJob.targetDbPass" type="password" class="form-control form-control-sm">
-                    </div>
-                </div>
-                <div class="text-end">
-                    <button type="button" class="btn btn-light me-2" @click="showCreateJobModal = false">取消</button>
-                    <button type="submit" class="btn btn-primary">提交</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div v-if="showSplitModal" class="modal-overlay" @click.self="closeSplits">
-        <div class="card modal-card-lg">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <span class="fw-bold">切片监控 <span class="fw-normal text-muted ms-2">{{ selectedDetail?.sourceCsvPath }}</span></span>
-                <button class="btn-close" @click="closeSplits"></button>
-            </div>
-            <div class="card-body modal-body-scroll p-0">
-                <table class="table table-striped mb-0 small">
-                    <thead class="table-light sticky-top">
-                    <tr><th>ID</th><th>切片名</th><th>状态</th><th>错误信息</th><th>操作</th></tr>
-                    </thead>
-                    <tbody>
-                    <tr v-for="s in splits" :key="s.id">
-                        <td>{{ s.id }}</td>
-                        <td>{{ s.splitFilePath }}</td>
-                        <td><span :class="getStatusClass(s.status)">{{ s.status }}</span></td>
-                        <td class="text-danger text-break" style="max-width: 300px;">{{ s.errorMsg }}</td>
-                        <td>
-                            <button v-if="['FAIL_LOAD', 'FAIL_VERIFY'].includes(s.status)" @click="retrySplit(s)" class="btn btn-warning btn-xs me-1">重试</button>
-                            <button v-if="s.status === 'FAIL_VERIFY'" @click="viewDiff(s)" class="btn btn-danger btn-xs">差异</button>
-                        </td>
-                    </tr>
-                    </tbody>
-                </table>
             </div>
         </div>
     </div>
 
-    <div v-if="showDiffModal" class="modal-overlay" @click.self="showDiffModal = false">
-        <div class="modal-card-sm p-3" style="max-width: 800px;">
-            <div class="d-flex justify-content-between mb-2">
-                <strong>比对差异详情 (前200行)</strong>
-                <button class="btn-close" @click="showDiffModal = false"></button>
-            </div>
-            <div class="diff-viewer">
-                {{ diffContent }}
-            </div>
-        </div>
-    </div>
 </div>
 
 <script>
-    const { createApp, ref, reactive, onMounted, onUnmounted, watch } = Vue;
+    const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
     const API_BASE = window.location.origin + '/api/migration';
 
     createApp({
         setup() {
-            // Data
+            // --- 状态数据 ---
             const jobs = ref([]);
             const batches = ref([]);
-            const details = ref({ content: [], totalPages: 0, number: 0, totalElements: 0 }); // 分页对象
+            const detailsData = ref({ content: [], totalPages: 0, first: true, last: true });
             const splits = ref([]);
 
             const selectedJob = ref(null);
+            const selectedBatch = ref(null);
             const selectedDetail = ref(null);
-            const currentTab = ref('batch'); // 'batch' or 'file'
+
+            const jobSearch = ref('');
+            const loadingJobs = ref(false);
+            const autoRefresh = ref(true);
             const pageConfig = reactive({ page: 0, size: 10 });
 
+            // UI 开关
             const showCreateJobModal = ref(false);
-            const showSplitModal = ref(false);
+            const showSplitDrawer = ref(false);
             const showDiffModal = ref(false);
             const diffContent = ref('');
-
             const newJob = reactive({ name: '', sourceDirectory: '', targetDbUrl: '', targetDbUser: 'root', targetDbPass: '' });
-            const autoRefresh = ref(true);
+
             let timer = null;
 
-            // API Calls
+            // --- 核心数据获取 ---
             const loadJobs = async () => {
-                const res = await axios.get(`${API_BASE}/jobs`);
-                jobs.value = res.data;
+                loadingJobs.value = true;
+                try {
+                    const res = await axios.get(`${API_BASE}/jobs`);
+                    jobs.value = res.data;
+                } finally { loadingJobs.value = false; }
             };
 
-            const loadTabContent = async () => {
+            const fetchBatches = async () => {
                 if (!selectedJob.value) return;
-                if (currentTab.value === 'batch') {
-                    const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/batches`);
-                    batches.value = res.data;
-                } else {
-                    const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/details`, {
+                const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/batches`);
+                batches.value = res.data;
+            };
+
+            const viewBadFile = async (detail) => {
+                try {
+                    const res = await axios.get(`${API_BASE}/detail/${detail.id}/bad-content`);
+                    diffContent.value = res.data;
+                    showDiffModal.value = true; // 复用差异查看的弹窗
+                } catch(e) {
+                    alert("无法读取失败文件: " + (e.response?.data || e.message));
+                }
+            };
+
+            const fetchDetails = async () => {
+                // 1. 必须先选中批次
+                if (!selectedBatch.value) return;
+                // 注意：这里需要后端支持根据 qianyiId (batchId) 查询
+                // 假设后端接口已按建议修改为: /api/migration/batch/{batchId}/details?page=0&size=10
+                // 如果暂时没有，可以用 /job/{id}/details 但需要前端过滤 (不推荐，数据量大)
+                // 这里按最佳实践调用：
+                try {
+                    // 假设后端接口: GET /api/migration/job/{jobId}/details?page=..&size=.. (返回的是全部)
+                    // 为了演示分页，我们暂时调用 Job 级别的分页接口 (因为之前没定义 Batch 级别的分页接口)
+                    // TODO: 生产环境建议实现 /api/migration/batch/{batchId}/details
+                    const res = await axios.get(`${API_BASE}/batch/${selectedBatch.value.id}/details`, {
                         params: { page: pageConfig.page, size: pageConfig.size }
                     });
-                    details.value = res.data;
-                }
+
+                    // 前端临时过滤: 只显示属于当前 Batch 的 (实际应由后端做)
+                    // 由于后端返回的是 Page 对象，前端过滤会导致页码不对。
+                    // 此处假设后端返回的数据就是我们要的，或者后端加了 qianyiId 参数
+                    // 演示代码直接使用返回结果
+                    detailsData.value = res.data;
+                } catch(e) { console.error("加载明细失败", e); }
             };
 
-            // Actions
+            // --- 交互动作 ---
             const selectJob = (job) => {
                 selectedJob.value = job;
-                pageConfig.page = 0; // 重置分页
-                loadTabContent();
+                selectedBatch.value = null;
+                selectedDetail.value = null;
+                batches.value = [];
+                detailsData.value = { content: [] };
+                fetchBatches();
             };
 
-            const changePage = (newPage) => {
-                if (newPage >= 0 && newPage < details.value.totalPages) {
-                    pageConfig.page = newPage;
-                    loadTabContent();
-                }
+            const selectBatch = (batch) => {
+                selectedBatch.value = batch;
+                pageConfig.page = 0; // 切换批次时重置页码
+                fetchDetails();
             };
 
+            const changePage = (delta) => {
+                pageConfig.page += delta;
+                fetchDetails();
+            };
+
+            const openSplits = async (detail) => {
+                selectedDetail.value = detail;
+                showSplitDrawer.value = true;
+                const res = await axios.get(`${API_BASE}/detail/${detail.id}/splits`);
+                splits.value = res.data;
+            };
+
+            // --- 业务操作 ---
             const submitCreateJob = async () => {
-                try {
-                    await axios.post(`${API_BASE}/job/create`, newJob);
-                    // 不再弹窗，直接关闭并刷新
-                    showCreateJobModal.value = false;
-                    loadJobs();
-                } catch(e) { alert("创建失败"); }
+                await axios.post(`${API_BASE}/job/create`, newJob);
+                showCreateJobModal.value = false;
+                loadJobs();
+            };
+
+            const jobAction = async (job, action) => {
+                if(!confirm(`确认${action === 'stop' ? '停止' : '恢复'}该作业吗？`)) return;
+                await axios.post(`${API_BASE}/job/${job.id}/action?action=${action}`);
+                loadJobs();
             };
 
             const retryBatch = async (batch) => {
-                if(!confirm('确定要重试此OK文件吗？将删除旧记录并重新扫描。')) return;
+                if(!confirm('确定要重试此批次吗？这将删除所有相关明细并重新扫描。')) return;
                 await axios.post(`${API_BASE}/batch/${batch.id}/retry`);
-                loadTabContent();
+                fetchBatches();
+            };
+
+            const closeBatch = async (batch) => {
+                if(!confirm('确定要强制结单吗？')) return;
+                await axios.post(`${API_BASE}/batch/${batch.id}/close`);
+                fetchBatches();
             };
 
             const retryTranscode = async (detail) => {
                 await axios.post(`${API_BASE}/detail/${detail.id}/retry-transcode`);
-                loadTabContent();
+                fetchDetails();
             };
 
+            // 1. 重试加载 (对应后端 /retry 接口，通常重置为 WAIT_LOAD)
             const retrySplit = async (split) => {
-                await axios.post(`${API_BASE}/split/${split.id}/retry`);
-                split.status = 'WAIT_LOAD';
+                if(!confirm('确定要重试加载吗？(将删除旧数据并重新LOAD)')) return;
+                try {
+                    await axios.post(`${API_BASE}/split/${split.id}/retry`);
+                    // 乐观更新：根据当前状态判断下一步
+                    if (split.status === 'FAIL_LOAD') {
+                        split.status = 'WAIT_LOAD';
+                    } else {
+                        // 如果是其他状态(如 FAIL_TRANSCODE)，通常也是回到 WAIT_LOAD 或 NEW
+                        split.status = 'WAIT_LOAD';
+                    }
+                    split.errorMsg = '';
+                } catch(e) { alert("操作失败"); }
+            };
+
+            // 2. 重新验证 (对应后端 /reverify 接口，重置为 WAIT_VERIFY)
+            // 覆盖 FAIL_VERIFY 和 PASS 两种情况
+            const reVerifySplit = async (split) => {
+                if(!confirm('确定要重新校验吗？(仅比对，不重新加载)')) return;
+
+                try {
+                    await axios.post(`${API_BASE}/split/${split.id}/reverify`);
+                    // 乐观更新 UI：让用户立刻看到状态变了
+                    split.status = 'WAIT_VERIFY';
+                    split.errorMsg = ''; // 清空错误显示
+                } catch(e) {
+                    alert("操作失败: " + (e.response?.data || e.message));
+                }
             };
 
             const viewDiff = async (split) => {
@@ -313,28 +498,44 @@
                     const res = await axios.get(`${API_BASE}/split/${split.id}/diff-content`);
                     diffContent.value = res.data;
                     showDiffModal.value = true;
-                } catch(e) { alert("获取差异失败"); }
+                } catch(e) { alert("无法读取差异文件"); }
             };
 
-            // Utils
-            const formatTime = (t) => t ? t.replace('T', ' ').substring(0, 19) : '';
+            // --- 工具函数 ---
+            const filteredJobs = computed(() => {
+                if(!jobSearch.value) return jobs.value;
+                return jobs.value.filter(j => j.name.includes(jobSearch.value) || j.sourceDirectory.includes(jobSearch.value));
+            });
+
+            const getFileName = (path) => path ? path.split(/[/\\]/).pop() : '-';
+            const formatTime = (t) => t ? t.replace('T', ' ').substring(5, 19) : '-';
             const getStatusClass = (s) => {
-                if(s?.startsWith('FAIL')) return 'badge bg-danger';
-                if(s === 'PASS' || s === 'FINISHED') return 'badge bg-success';
-                if(s === 'PROCESSING' || s === 'LOADING' || s === 'VERIFYING') return 'badge bg-primary';
-                if(s === 'TRANSCODING') return 'badge bg-warning text-dark';
-                return 'badge bg-secondary';
+                const map = {
+                    'ACTIVE': 'badge bg-primary', 'STOPPED': 'badge bg-secondary',
+                    'NEW': 'badge bg-secondary', 'TRANSCODING': 'badge bg-warning text-dark',
+                    'PROCESSING_CHILDS': 'badge bg-info text-dark',
+                    'FINISHED': 'badge bg-success', 'FINISHED_WITH_ERROR': 'badge bg-danger',
+                    'WAIT_LOAD': 'badge bg-light text-dark border', 'LOADING': 'badge bg-primary',
+                    'WAIT_VERIFY': 'badge bg-info text-dark', 'VERIFYING': 'badge bg-info',
+                    'PASS': 'badge bg-success', 'FAIL_LOAD': 'badge bg-danger', 'FAIL_VERIFY': 'badge bg-danger', 'FAIL_TRANSCODE': 'badge bg-danger'
+                };
+                return map[s] || 'badge bg-secondary';
             };
 
-            // Lifecycle
+            // --- 生命周期 ---
             onMounted(() => {
                 loadJobs();
                 timer = setInterval(() => {
                     if(autoRefresh.value) {
-                        loadJobs();
-                        loadTabContent(); // 刷新当前Tab
-                        if(showSplitModal.value && selectedDetail.value) {
-                            axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits`).then(res => splits.value = res.data);
+                        // 智能刷新：只刷新当前打开的视图
+                        if(!selectedJob.value) loadJobs();
+                        else {
+                            fetchBatches(); // 刷新批次状态
+                            if(selectedBatch.value) fetchDetails(); // 刷新明细进度
+                            if(showSplitDrawer.value && selectedDetail.value) {
+                                // 刷新切片
+                                axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits`).then(r => splits.value = r.data);
+                            }
                         }
                     }
                 }, 3000);
@@ -342,14 +543,19 @@
             onUnmounted(() => clearInterval(timer));
 
             return {
-                jobs, batches, details, splits, selectedJob, currentTab, pageConfig,
-                showCreateJobModal, showSplitModal, showDiffModal, diffContent, newJob, autoRefresh,
-                loadJobs, selectJob, changePage, openCreateModal:()=>showCreateJobModal.value=true, submitCreateJob,
-                refreshCurrentTab: loadTabContent, retryBatch, retryTranscode, retrySplit, viewDiff,
-                openSplits: (d) => { selectedDetail.value = d; showSplitModal.value = true; axios.get(`${API_BASE}/detail/${d.id}/splits`).then(res => splits.value = res.data); },
-                closeSplits: () => showSplitModal.value = false,
-                jobAction: async (j, a) => { if(confirm(`确认${a}?`)) { await axios.post(`${API_BASE}/job/${j.id}/action?action=${a}`); loadJobs(); } },
-                getStatusClass, formatTime
+                jobs, batches, detailsData, splits,
+                reVerifySplit,
+                selectedJob, selectedBatch, selectedDetail,
+                jobSearch, filteredJobs, pageConfig, loadingJobs, autoRefresh,
+                showCreateJobModal, showSplitDrawer, showDiffModal, diffContent, newJob,
+
+                openCreateModal: () => showCreateJobModal.value = true,
+                selectJob, selectBatch, changePage, openSplits,
+                submitCreateJob, jobAction, retryBatch, closeBatch, retryTranscode, retrySplit, viewDiff,
+
+                getFileName, formatTime, getStatusClass,
+                fetchBatches, // export for manual refresh btn
+                viewBadFile
             };
         }
     }).mount('#app');

@@ -48,16 +48,17 @@ public class StartupValidator implements ApplicationRunner {
      * 校验配置目录
      */
     private void validateDirectories() {
-        // 获取配置的目录
-        String outputDir = appProperties.getJob().getOutputDir();
-        String errorDir = appProperties.getJob().getErrorDir();
-        String verifyResultDir = appProperties.getVerify().getVerifyResultBasePath();
+        AppProperties.TranscodeJob transcodeJob = appProperties.getTranscodeJob();
 
-        // 你的 AppProperties 可能还有其他需要校验的路径
-        
-        checkDir("Output Directory", outputDir);
-        checkDir("Error Directory", errorDir);
-        checkDir("Error verifyResult Directory", verifyResultDir);
+        // 获取配置的目录
+        String outputDir = transcodeJob.getOutputDir();
+        checkDir("转码文件输出目录", outputDir);
+
+        String errorDir = transcodeJob.getErrorDir();
+        checkDir("转码报错信息输出目录", errorDir);
+
+        String verifyResultDir = appProperties.getVerify().getVerifyResultBasePath();
+        checkDir("验证差异结果目录", verifyResultDir);
     }
 
     private void checkDir(String name, String path) {

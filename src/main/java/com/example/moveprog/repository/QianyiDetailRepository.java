@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
@@ -50,10 +52,34 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
 
     List<QianyiDetail> findByJobId(Long jobId);
 
-    Page<QianyiDetail> findByJobId(Long jobId, Pageable pageable);
+    //Page<QianyiDetail> findByJobId(Long jobId, Pageable pageable);
+    Page<QianyiDetail> findByQianyiId(Long qianyiId, Pageable pageable);
+
+    // 方法 A: 通过命名规范删除 (Spring Data JPA 自动实现)
+    // 只要你的实体里有 qianyiId 这个字段，且是 Long 类型
+    //void deleteByQianyiId(Long qianyiId);
+
+    // 方法 B: 如果你想显式控制 SQL (更推荐，性能更好)
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM QianyiDetail d WHERE d.qianyiId = :qianyiId")
+    void deleteByQianyiId(Long qianyiId);
 
     @Modifying
+    @Transactional
     @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus")
     int resetStatus(DetailStatus oldStatus, DetailStatus newStatus);
+
+    /**
+     * 更新转码失败行数
+     * * @Transactional(propagation = Propagation.REQUIRES_NEW):
+     * 不管当前有没有事务，都开启一个新的独立事务。
+     * 这样可以保证：即使 TranscodeService 抛出异常导致外层回滚，
+     * 这个错误计数的更新依然会提交保存！
+     */
+    @Modifying
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Query("UPDATE QianyiDetail d SET d.transcodeErrorCount = :count WHERE d.id = :id")
+    void updateErrorCount(Long id, Long count);
 
 }
