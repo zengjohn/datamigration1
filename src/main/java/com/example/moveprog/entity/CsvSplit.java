@@ -2,6 +2,7 @@ package com.example.moveprog.entity;
 
 import com.example.moveprog.enums.CsvSplitStatus;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDateTime;

@@ -8,6 +8,7 @@ import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.service.JobControlManager;
 import com.example.moveprog.service.StateManager;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;

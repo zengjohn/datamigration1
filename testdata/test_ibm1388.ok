@@ -1,7 +1,14 @@
 {
-  "ddl": "/root/mig1/test_data/test_ibm1388.sql",
+  "ddl": "test_ibm1388.sql",
   "csv": [
-    "/root/mig1/test_data/test_ibm1388.csv",
+    "test_ibm1388.csv",
+    "A_Basic_Encoding.csv",
+    "B_Csv_Format_Edge.csv",
+    "C_Business_Rules.csv",
+    "C_Business_Rules.csv",
+    "E1_Mixed_Encoding.csv",
+    "E2_Unclosed_Quote.csv",
+    "E3_Truncated.csv",
+    "F_Tunneling_Handler.csv"
   ]
 }
-

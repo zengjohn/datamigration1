@@ -6,6 +6,9 @@ spring:
     name: moveprog
   autoconfigure:
     exclude: com.github.gavlyukovskiy.boot.jdbc.decorator.DataSourceDecoratorAutoConfiguration
+  mvc:
+    validation:
+      enabled: true  # 默认就是 true
   web:
     resources:
       # 关键配置：指定静态资源查找路径
@@ -40,22 +43,38 @@ app:
   csv:
     # 1. 源文件 IBM1388 配置
     ibm-source:
-      encoding: UTF-8        # 核心编码
-      # [关键] 换行符设置
-      # 方式 A: 自动检测 (推荐，能适应 \n 和 \r\n)
-      #line-separator: AUTO
-      # 方式 B: 强制指定 (如果你非常确定)
-      # line-separator: "\n"
+      # 核心编码
+      encoding: IBM1388
       # [关键] 大机文件通常字段很多或很长，防止报错
       max-chars-per-column: 50000
+      # 【自动探测全开】
+      # 即使你下面配了 delimiter: ','，如果程序探测到文件里全是 '\t'，它会自动切换为 '\t'
+      detect-line-separator: true
+      detect-delimiter: true
+      detect-quote: true
+      detect-sample-rows: 2000
+      # 即使开启了自动探测，也可以留着这些作为“探测失败”后的默认值
+      line-separator: "\n"
       # 假如源文件用分号分隔
-      #delimiter: ;
+      delimiter: ","
       # 假如源文件不带引号
       #quote: "\0"  # 这是一个特殊技巧，用空字符表示无引号
+      quote: "\""
+      tunneling: true
+      ignore-leading-whitespaces: true
+      ignore-trailing-whitespaces: true
+      null-value: ""
+      quote-escape: "\""
+      header-extraction: false
 
     # 2. 中间文件 UTF-8 配置
     utf8-split:
       encoding: UTF-8
+      line-separator: "\n"
+      delimiter: ","
+      quote: "\""
+      quote-escape: "\""
+      null-value: ""
 
   # 3. 性能参数调优
   performance:

@@ -274,7 +274,6 @@ public class TranscodeService {
         AppProperties.Performance performance = config.getPerformance();
         AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
         CsvWriterSettings settings = utf8Split.toWriterSettings();
-        settings.setQuoteAllFields(true); // TDSQL 建议全引, 通常数据库导入建议全引用，或者加一个配置项控制
 
         Writer out = new BufferedWriter(new OutputStreamWriter(
                 Files.newOutputStream(path), Charset.forName(utf8Split.getEncoding())),

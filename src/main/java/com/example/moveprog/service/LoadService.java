@@ -154,12 +154,16 @@ public class LoadService {
 
         String safePath = splitCsvPath.replace("\\", "/");
 
+        AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
+
         StringBuilder sb = new StringBuilder();
         sb.append("LOAD DATA LOCAL INFILE '").append(safePath).append("' ");
         sb.append("INTO TABLE ").append(tableName).append(" ");
         sb.append("CHARACTER SET utf8mb4 ");
-        sb.append("FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\n' ");
-        
+        sb.append("FIELDS TERMINATED BY '").append(utf8Split.getDelimiter()).append("' ");
+        sb.append("OPTIONALLY ENCLOSED BY '").append(utf8Split.getQuote()).append("' ");
+        sb.append("LINES TERMINATED BY '").append(utf8Split.getLineSeparator()).append("' ");
+
         // --- 关键部分：列映射 ---
         // CSV 文件的结构是: [DDL列1, DDL列2, ... DDL列N, 行号]
         // SQL 语法: (col1, col2, ..., @var_lineno)

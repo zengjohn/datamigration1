@@ -54,10 +54,16 @@ public class AppProperties {
         private String encoding = "UTF-8";
 
         // ==========================================
-        // 1. CsvFormat 基础属性 (赋默认值)
+        // 1. 基础手动配置 (作为自动探测失败时的兜底默认值)
         // ==========================================
 
         // 如果 yaml 没配，就是 ','；配了就是 yaml 的值
+        /**
+         * 换行符配置
+         * 可选值: "\n", "\r\n"
+         */
+        private String lineSeparator = "\n";
+
         private char delimiter = ',';
 
         private char quote = '"';
@@ -66,15 +72,20 @@ public class AppProperties {
 
         private char comment = '#';
 
-        /**
-         * 换行符配置
-         * 可选值: "\n", "\r\n", 或者 "AUTO" (自动检测)
-         * 默认值: "AUTO" (推荐用于处理来源不确定的文件)
-         */
-        private String lineSeparator = "AUTO";
+        // ==========================================
+        // 2. [新增] 自动探测增强配置 (Auto-Detection)
+        // ==========================================
+        private boolean detectLineSeparator = false;
+        // 是否开启分隔符自动探测 (默认 true，省心)
+        private boolean detectDelimiter = false;
+        // 是否开启引号自动探测
+        private boolean detectQuote = false;
+
+        // 探测时采样的行数 (读前1000行来猜格式，防止前几行数据异常导致猜错)
+        private int detectSampleRows = 1000;
 
         // ==========================================
-        // 2. ParserSettings 调优属性 (赋默认值)
+        // 3. 解析健壮性配置
         // ==========================================
 
         // 是否包含表头
@@ -82,7 +93,10 @@ public class AppProperties {
 
         // 单个单元格最大字符数 (防止缓冲区溢出)
         // 默认 4096 太小，建议 ETL 场景默认给大一点，比如 20000
-        private int maxCharsPerColumn = 20000;
+        private int maxCharsPerColumn = 50000;
+
+        // [关键] 跳过文件头部的行数 (比如大机文件第一行有时是系统生成的垃圾信息)
+        private long skipRows = 0;
 
         // 是否忽略值前面的空格 (例如 " abc" -> "abc")
         private boolean ignoreLeadingWhitespaces = true;
@@ -91,7 +105,7 @@ public class AppProperties {
         private boolean ignoreTrailingWhitespaces = true;
 
         // 读取时将什么字符串视为 null (比如 CSV 里写的是 NULL 字样)
-        private String nullValue = null;
+        private String nullValue = ""; // 将 CSV 中的 "null" 或空串转为空字符串
         private boolean tunneling = false; // 大机用转义来表示编码不支持的生僻字（大机IBM1388可能有这种情况)
 
         /**
@@ -100,20 +114,40 @@ public class AppProperties {
         public CsvParserSettings toParserSettings() {
             CsvParserSettings settings = new CsvParserSettings();
 
-            // --- 1. 设置 Format ---
+            // --- 1. 基础格式 (作为默认值)
             CsvFormat format = settings.getFormat();
             format.setDelimiter(this.delimiter);
             format.setQuote(this.quote);
+            format.setQuoteEscape(this.quoteEscape);
             format.setComment(this.comment);
-            // --- 2. 设置换行符逻辑 ---
-            if ("AUTO".equalsIgnoreCase(this.lineSeparator) || this.lineSeparator == null) {
-                // 开启自动检测 (Univocity 会读取文件前几个字节来猜)
+
+            // --- A. 物理层：确定“行”的边界 ---
+            if (this.detectLineSeparator) {
+                // 1. 如果开启了探测，让框架自己去猜
                 settings.setLineSeparatorDetectionEnabled(true);
             } else {
-                // 强制指定 (注意处理转义字符)
-                format.setLineSeparator(this.lineSeparator);
+                // 2. 如果关闭了探测，则必须手动指定一个明确的换行符
+                settings.setLineSeparatorDetectionEnabled(false); // 显式关闭探测
+                settings.getFormat().setLineSeparator(this.lineSeparator); // 使用配置的兜底值
             }
-            // --- 3. 设置调优参数 ---
+
+            // 3. [增强] 自动探测逻辑
+            // --- B. 逻辑层：确定“列”的结构 ---
+            // 这两个开关启动的是“格式分析器”，它在“确定了行”之后才开始工作
+            settings.setDelimiterDetectionEnabled(this.detectDelimiter);
+            settings.setQuoteDetectionEnabled(this.detectQuote);
+
+            // 设置采样行数：在大文件场景下，多读一点样本能避免误判
+            if (this.detectDelimiter || this.detectQuote || this.detectLineSeparator) {
+                settings.setFormatDetectorRowSampleCount(this.detectSampleRows);
+            }
+
+            // 4. 跳过行数 (注意：这里要用 skipRows，不要用 maxCharsPerColumn)
+            if (this.skipRows > 0) {
+                settings.setNumberOfRowsToSkip(this.skipRows);
+            }
+
+            // 5. 其他健壮性配置
             settings.setHeaderExtractionEnabled(this.headerExtraction);
             settings.setMaxCharsPerColumn(this.maxCharsPerColumn);
             settings.setIgnoreLeadingWhitespaces(this.ignoreLeadingWhitespaces);
@@ -141,7 +175,7 @@ public class AppProperties {
             String separator = "AUTO".equalsIgnoreCase(this.lineSeparator) ? "\n" : this.lineSeparator;
             format.setLineSeparator(separator);
             settings.setSkipEmptyLines(true);
-            settings.setQuoteAllFields(true);
+            settings.setQuoteAllFields(true); // TDSQL 建议全引, 通常数据库导入建议全引用，或者加一个配置项控制
             return settings;
         }
 

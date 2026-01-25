@@ -1,7 +1,6 @@
 {
-  "ddl": "/root/mig1/test_data/test_iconv.sql",
+  "ddl": "test_iconv.sql",
   "csv": [
-    "/root/mig1/test_data/test_iconv.csv",
+    "test_iconv.csv",
   ]
 }
-

@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -23,10 +24,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Component
 @Slf4j
 @RequiredArgsConstructor
+@Validated
 public class DirectoryMonitor {
 
     private final MigrationJobRepository jobRepo;
@@ -123,6 +126,12 @@ public class DirectoryMonitor {
             // 3.2 校验 CSV 列表
             if (content.csv == null || content.csv.isEmpty()) {
                 throw new RuntimeException("JSON 中 'csv' 列表为空");
+            }
+            for (int i=0; i<content.csv.size(); i++) {
+                String csv = content.csv.get(i);
+                if (Objects.isNull(csv) || csv.isEmpty()) {
+                    throw new RuntimeException("JSON 中 第 "+ (i+1) + "个 'csv' 为空");
+                }
             }
 
             List<String> finalCsvPaths = new ArrayList<>();
