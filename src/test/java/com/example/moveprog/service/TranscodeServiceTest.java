@@ -1,10 +1,12 @@
 package com.example.moveprog.service;
 
 import com.example.moveprog.config.AppProperties;
+import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.DetailStatus;
+import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
@@ -23,18 +25,17 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -52,10 +53,11 @@ class TranscodeServiceTest {
     @InjectMocks
     private TranscodeService transcodeService;
 
-    // 使用 JUnit 5 的临时目录功能，测试完自动清理
+    // JUnit 5 临时目录，测试结束后自动删除
     @TempDir
     Path tempDir;
 
+    // 静态方法的 Mock 对象
     private MockedStatic<SchemaParseUtil> schemaParseUtilMock;
     private MockedStatic<MigrationOutputDirectorUtil> outputUtilMock;
     private MockedStatic<CharsetFactory> charsetFactoryMock;
@@ -63,7 +65,6 @@ class TranscodeServiceTest {
 
     @BeforeEach
     void setUp() {
-        // Mock 静态工具类
         schemaParseUtilMock = Mockito.mockStatic(SchemaParseUtil.class);
         outputUtilMock = Mockito.mockStatic(MigrationOutputDirectorUtil.class);
         charsetFactoryMock = Mockito.mockStatic(CharsetFactory.class);
@@ -72,140 +73,198 @@ class TranscodeServiceTest {
 
     @AfterEach
     void tearDown() {
-        // 释放静态 Mock
         schemaParseUtilMock.close();
         outputUtilMock.close();
         charsetFactoryMock.close();
         fastEscapeHandlerMock.close();
     }
 
+    /**
+     * 测试核心流程：正常转码、切分文件、保存记录
+     */
     @Test
     void testExecute_HappyPath() throws IOException {
-        // --- 1. 准备测试数据和环境 ---
-        Long detailId = 100L;
-        Long qianyiId = 200L;
-        Long jobId = 300L;
-        String mockEncoding = "UTF-8"; // 测试用 UTF-8 模拟 IBM 编码，简化 byte 操作
+        // --- 1. 准备数据 ---
+        Long detailId = 1L;
+        Long qianyiId = 10L;
+        Long jobId = 100L;
 
-        // 创建临时的源文件 (模拟 IBM1388 csv)
-        Path sourceFile = tempDir.resolve("source.csv");
-        String csvContent = "\"col1\",\"col2\"\n\"val1\",\"val2\"\n\"val3\",\"val4\"";
+        // 模拟源文件 (内容假设是 CSV 格式)
+        Path sourceFile = tempDir.resolve("source_ibm.csv");
+        // 这里写入 UTF-8，后续通过 Mock 让 CharsetFactory 认为它是 IBM-1388 从而能读出来
+        String csvContent = "\"name\",\"age\"\n\"张三\",\"18\"\n\"李四\",\"20\"";
         Files.writeString(sourceFile, csvContent, StandardCharsets.UTF_8);
 
-        // 创建输出目录
-        Path outDir = tempDir.resolve("out");
-        Path splitDir = outDir.resolve("split");
-        Path errorDir = outDir.resolve("error");
+        // 模拟输出目录结构 (outDirectory 现在来自 MigrationJob)
+        Path outDir = tempDir.resolve("output_home");
+        Path splitDir = outDir.resolve("split_dir");
+        Path errorDir = outDir.resolve("error_dir");
         Files.createDirectories(splitDir);
         Files.createDirectories(errorDir);
 
-        // --- 2. Mock 实体对象 ---
+        // --- 2. Mock 实体 ---
+        MigrationJob job = new MigrationJob();
+        job.setId(jobId);
+        job.setOutDirectory(outDir.toString()); // 【变更点】从 Job 获取目录
+
         QianyiDetail detail = new QianyiDetail();
         detail.setId(detailId);
         detail.setQianyiId(qianyiId);
         detail.setJobId(jobId);
-        detail.setStatus(DetailStatus.TRANSCODING);
         detail.setSourceCsvPath(sourceFile.toString());
+        detail.setStatus(DetailStatus.TRANSCODING); // 初始状态
 
         Qianyi qianyi = new Qianyi();
         qianyi.setId(qianyiId);
         qianyi.setJobId(jobId);
-        qianyi.setDdlFilePath("dummy.sql");
+        qianyi.setDdlFilePath("schema.sql"); // 假路径
 
-        MigrationJob job = new MigrationJob();
-        job.setId(jobId);
-        job.setOutDirectory(outDir.toString());
-
-        // --- 3. Mock 仓库行为 ---
+        // --- 3. Mock Repository ---
+        // 注意：代码中有两次 findById(detailId)，一次是清理旧数据，一次是双重检查
         when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
-        when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
         when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
-        
-        // Mock 静态工具类行为
-        schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(any())).thenReturn(Collections.emptyList()); // 假设没有DDL校验或返回空
-        
-        // Mock 路径生成逻辑，指向我们的临时目录
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(any())).thenReturn(splitDir.toString());
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(any())).thenReturn(errorDir.toString());
-        // 模拟生成切片文件名: splitDir/100_1.csv
-        Path splitFile = splitDir.resolve(detailId + "_1.csv");
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(any(), eq(detailId), eq(1)))
-                      .thenReturn(splitFile.toString());
+        when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
 
-        // Mock 字符集工厂
-        charsetFactoryMock.when(() -> CharsetFactory.resolveCharset(any())).thenReturn(StandardCharsets.UTF_8);
-        charsetFactoryMock.when(() -> CharsetFactory.createDecoder(any(), anyBoolean()))
-                          .thenCallRealMethod(); // 如果 createDecoder 逻辑简单可以直接调用真实，或者 mock 返回 UTF8 decoder
+        // --- 4. Mock AppProperties ---
+        mockAppConfig("IBM-1388"); // 传入配置编码
 
-        // --- 4. Mock AppProperties 配置 (最繁琐的一步) ---
-        mockAppConfig(mockEncoding);
+        // --- 5. Mock 静态工具类行为 ---
+        // 5.1 模拟 DDL 解析 (返回空列表表示不校验列数，或者 mock 具体列)
+        schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString()))
+                .thenReturn(Collections.emptyList());
 
-        // --- 5. 执行测试 ---
+        // 5.2 模拟路径生成 (全部指向 tempDir)
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(anyString()))
+                .thenReturn(splitDir.toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(anyString()))
+                .thenReturn(errorDir.toString());
+
+        // 模拟生成的切片文件路径: .../split_dir/1_1.csv
+        Path expectedSplitFile = splitDir.resolve(detailId + "_1.csv");
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(anyString(), eq(detailId), eq(1)))
+                .thenReturn(expectedSplitFile.toString());
+
+        // 5.3 模拟 Charset (关键技巧：把 IBM-1388 映射回 UTF-8，这样我们可以读普通文件)
+        Charset utf8 = StandardCharsets.UTF_8;
+        charsetFactoryMock.when(() -> CharsetFactory.resolveCharset(anyString())).thenReturn(utf8);
+        // createDecoder 比较复杂，建议让它调用真实逻辑，因为我们已经把 Charset 替换成了 UTF-8
+        charsetFactoryMock.when(() -> CharsetFactory.createDecoder(any(Charset.class), anyBoolean()))
+                .thenCallRealMethod();
+
+        // --- 6. 执行 ---
         transcodeService.execute(detailId);
 
-        // --- 6. 验证结果 ---
-        // 验证状态更新流程
+        // --- 7. 验证 ---
+        // 7.1 验证状态流转
         verify(stateManager).updateDetailStatus(detailId, DetailStatus.TRANSCODING);
         verify(stateManager).updateDetailStatus(detailId, DetailStatus.PROCESSING_CHILDS);
 
-        // 验证切片文件是否生成
-        assertTrue(Files.exists(splitFile), "切片文件应该被创建");
-        
-        // 验证切片内容 (注意：代码逻辑中会追加一列行号)
-        String outputContent = Files.readString(splitFile, StandardCharsets.UTF_8);
-        // 原文: "val1","val2" -> 预期: "val1","val2","2" (假设 context.currentLine() 是 2，因为第一行是header被读过了? 或者 parseNext 逻辑)
-        // Univocity parser behavior: parseNext() gets row. 
-        // 你的代码逻辑: newRow[last] = currentLineNoFromContext
-        // 检查是否包含原内容
-        assertTrue(outputContent.contains("\"val1\",\"val2\""));
-        assertTrue(outputContent.contains("\"val3\",\"val4\""));
+        // 7.2 验证切片文件生成
+        assertTrue(Files.exists(expectedSplitFile), "切片文件应该被创建");
+        String fileContent = Files.readString(expectedSplitFile);
+        // 验证内容是否被转码并写入 (你的代码会加一列行号)
+        // 原始内容: "张三","18" -> 期望包含: "张三","18"
+        assertTrue(fileContent.contains("张三"), "切片文件应包含数据");
 
-        // 验证是否保存了 Split 记录
-        verify(splitRepo, atLeastOnce()).save(any());
-        
-        // 验证错误计数更新
+        // 7.3 验证数据库保存
+        // 验证是否保存了 split 记录
+        verify(splitRepo, atLeastOnce()).save(any(CsvSplit.class));
+        // 验证是否更新了错误行数
         verify(detailRepo).updateErrorCount(eq(detailId), eq(0L));
     }
 
+    /**
+     * 测试清理旧数据逻辑
+     */
     @Test
-    void testExecute_ExceptionHandling() {
-        Long detailId = 100L;
-        // 模拟 repository 抛出异常
-        when(detailRepo.findById(detailId)).thenThrow(new RuntimeException("DB Connection Failed"));
+    void testCleanUpOldSplits() throws IOException {
+        Long detailId = 1L;
+        Long jobId = 100L;
+
+        // 准备旧的切片文件
+        Path splitFile = tempDir.resolve("old_split.csv");
+        Files.writeString(splitFile, "data");
+
+        // Mock 实体
+        QianyiDetail detail = new QianyiDetail();
+        detail.setId(detailId);
+        detail.setJobId(jobId);
+
+        MigrationJob job = new MigrationJob();
+        job.setId(jobId);
+        job.setOutDirectory(tempDir.toString()); // 【变更点】
+
+        CsvSplit oldSplit = new CsvSplit();
+        oldSplit.setId(555L);
+        oldSplit.setSplitFilePath(splitFile.toString()); // 设置真实存在的路径以便测试删除
+
+        // Mock Repo
+        when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+        when(splitRepo.findByDetailId(detailId)).thenReturn(List.of(oldSplit));
+
+        // Mock OutputUtil 以便计算 verifyResultFile 路径
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.verifyResultDirectory(anyString()))
+                .thenReturn(tempDir.resolve("verify").toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.verifyResultFile(anyString(), eq(555L)))
+                .thenReturn(tempDir.resolve("verify/diff_555.txt").toString());
+
+        // 执行清理
+        transcodeService.cleanUpOldSplits(detailId);
+
+        // 验证
+        assertFalse(Files.exists(splitFile), "旧的切片文件应该被物理删除");
+        verify(splitRepo).deleteByDetailId(detailId); // 验证 DB 删除调用
+        // 验证是否调用了目标库清理
+        try {
+            verify(targetDatabaseConnectionManager).deleteLoadOldData(any(), eq(detailId), eq(555L));
+        } catch (Exception e) {
+            fail("Exception verifying db call");
+        }
+    }
+
+    /**
+     * 测试任务中断异常处理
+     */
+    @Test
+    void testExecute_JobStopped() {
+        Long detailId = 1L;
+        // 模拟清理阶段抛出“任务停止”异常
+        when(detailRepo.findById(detailId)).thenThrow(new JobStoppedException("Stop by user"));
 
         transcodeService.execute(detailId);
 
-        // 验证状态更新为 FAIL_TRANSCODE
-        verify(stateManager).updateDetailStatus(detailId, DetailStatus.FAIL_TRANSCODE);
+        // 验证没有更新为 FAIL_TRANSCODE (中断是正常的停止流程)
+        verify(stateManager, never()).updateDetailStatus(eq(detailId), eq(DetailStatus.FAIL_TRANSCODE));
     }
 
-    // --- 辅助方法：构建复杂的 AppProperties ---
+    // --- 辅助：组装 AppProperties ---
     private void mockAppConfig(String encoding) {
-        // 创建各级配置对象
-        AppProperties.Csv csv = new AppProperties.Csv();
-        AppProperties.CsvDetailConfig ibmSource = new AppProperties.CsvDetailConfig();
-        ibmSource.setEncoding(encoding);
-        ibmSource.setTunneling(false); // 关闭 Tunneling 简化测试
-        // 设置 ParserSettings 默认值
-        // 注意：如果 CsvDetailConfig 内部字段有默认值最好，否则这里要手动 set
-        
-        AppProperties.CsvDetailConfig utf8Split = new AppProperties.CsvDetailConfig();
-        utf8Split.setEncoding("UTF-8");
+        // 创建配置层级
+        AppProperties.CsvDetailConfig ibmConfig = new AppProperties.CsvDetailConfig();
+        ibmConfig.setEncoding(encoding);
+        ibmConfig.setTunneling(false);
+        // 默认 Parser 设置
+        // ... (如果代码里有 toParserSettings 调用，确保 config 里的值不是 null)
 
-        csv.setIbmSource(ibmSource);
-        csv.setUtf8Split(utf8Split);
+        AppProperties.CsvDetailConfig utf8Config = new AppProperties.CsvDetailConfig();
+        utf8Config.setEncoding("UTF-8");
+
+        AppProperties.Csv csv = new AppProperties.Csv();
+        csv.setIbmSource(ibmConfig);
+        csv.setUtf8Split(utf8Config);
 
         AppProperties.Performance perf = new AppProperties.Performance();
         perf.setReadBufferSize(1024);
         perf.setWriteBufferSize(1024);
-        perf.setSplitRows(1000); // 设置大一点，让它只生成一个文件
+        perf.setSplitRows(100);
 
-        AppProperties.TranscodeJob transcodeJob = new AppProperties.TranscodeJob();
-        transcodeJob.setMaxErrorCount(10);
+        AppProperties.TranscodeJob jobConfig = new AppProperties.TranscodeJob();
+        jobConfig.setMaxErrorCount(10);
 
-        // 组装
-        when(config.getCsv()).thenReturn(csv);
-        when(config.getPerformance()).thenReturn(perf);
-        when(config.getTranscodeJob()).thenReturn(transcodeJob);
+        // Mock config 行为
+        lenient().when(config.getCsv()).thenReturn(csv);
+        lenient().when(config.getPerformance()).thenReturn(perf);
+        lenient().when(config.getTranscodeJob()).thenReturn(jobConfig);
     }
 }

@@ -14,6 +14,7 @@ import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
@@ -155,7 +156,8 @@ public class VerifyService {
                     // 对每一列进行转义还原，与 TranscodeService 入库逻辑保持一致
                     String[] processedRow = new String[row.length];
                     for (int i = 0; i < row.length; i++) {
-                        processedRow[i] = FastEscapeHandler.unescape(row[i]);
+                        Pair<Boolean, String> unescape = FastEscapeHandler.unescape(row[i]);
+                        processedRow[i] = unescape.getRight();
                     }
                     return processedRow;
                 }

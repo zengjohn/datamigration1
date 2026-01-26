@@ -23,6 +23,7 @@ import com.univocity.parsers.csv.CsvWriterSettings;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -205,13 +206,19 @@ public class TranscodeService {
 
                     // 1. 准备要写入的数据对象 (默认就是原始数据)
                     String[] rowToWrite = originalLine;
+                    boolean[] unescaped = new boolean[originalLine.length];
+                    for(int i=0; i<originalLine.length; i++){
+                        unescaped[i] = false;
+                    }
                     // 如果配置啦tunneling
                     if (isTunneling) {
                         // 2. 解析生僻字 (用于入库)
                         // 解析出真实的汉字行 (例如把 "张\2CC56\三" 变成 "张𬱖三")
                         rowToWrite = new String[originalLine.length];
                         for(int i=0; i<originalLine.length; i++) {
-                            rowToWrite[i] = FastEscapeHandler.unescape(originalLine[i]);
+                            Pair<Boolean, String> unescapeCall = FastEscapeHandler.unescape(originalLine[i]);
+                            unescaped[i] = unescapeCall.getLeft();
+                            rowToWrite[i] = unescapeCall.getRight();
                         }
                     }
 
@@ -223,7 +230,7 @@ public class TranscodeService {
                     }
                     // --- 2. 列级检测：稳定性验证 ---
                     else {
-                        columnErrors = validateRowStability(originalLine, rowToWrite, ibmCharset, ibmEncoder, isTunneling);
+                        columnErrors = validateRowStability(originalLine, rowToWrite, unescaped, ibmCharset, ibmEncoder, isTunneling);
                         if (!columnErrors.isEmpty()) {
                             errorType = "STABILITY_CHECK_FAILED";
                         }
@@ -394,7 +401,7 @@ public class TranscodeService {
     /**
      * 核心验证逻辑
      */
-    private List<ColumnErrorDetail> validateRowStability(String[] originalLine, String[] rowToWrite, Charset charset, CharsetEncoder encoder, boolean isTunneling) {
+    private List<ColumnErrorDetail> validateRowStability(String[] originalLine, String[] rowToWrite, boolean[] unescaped, Charset charset, CharsetEncoder encoder, boolean isTunneling) {
         List<ColumnErrorDetail> errors = new ArrayList<>();
         if (originalLine == null) return errors;
 
@@ -415,7 +422,7 @@ public class TranscodeService {
 
             // 2. 方案 B：双向回转验证
             // 修改了方法参数名，这里调用看起来更舒服
-            if (!checkCellStability(originalCell, cellToWrite, charset, encoder, isTunneling)) {
+            if (unescaped[i] && !checkCellStability(originalCell, cellToWrite, charset, encoder, isTunneling)) {
                 errors.add(buildColumnError(i, originalCell, charset, "STABILITY_MISMATCH"));
             }
         }
@@ -447,7 +454,6 @@ public class TranscodeService {
                 String restored = FastEscapeHandler.escapeForCheck(cellToWrite, encoder);
 
                 // 比对：原始串 (含 \HEX\) vs 还原串 (含 \HEX\)
-                // TODO 改函数有bug, 先禁用
                 return originalCell.equals(restored);
             } else {
                 // --- 旧模式：标准回转 (Standard版) ---

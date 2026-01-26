@@ -58,6 +58,8 @@ public class CoreComparator {
                 Long fileRowNo = getRowNo(fileRow);
                 Long dbRowNo = getRowNo(dbRow);
 
+                if (dbRowNo == null && fileRowNo == null) break;
+
                 // === Case 1: 源端存在，目标端不存在 (File 有, DB 没有) ===
                 // 此时 fileRowNo < dbRowNo (或者 DB 已经读完了)
                 if (dbRowNo == null || (fileRowNo != null && fileRowNo < dbRowNo)) {
@@ -67,7 +69,6 @@ public class CoreComparator {
 
                     // File 指针后移，DB 不动
                     fileRow = fileIter.hasNext() ? fileIter.next() : null;
-                    continue;
                 }
 
                 // === Case 2: 源端不存在，目标端存在 (DB 有, File 没有) ===
@@ -79,7 +80,6 @@ public class CoreComparator {
 
                     // DB 指针后移，File 不动
                     dbRow = dbIter.hasNext() ? dbIter.next() : null;
-                    continue;
                 }
 
                 // === Case 3: 两端都存在，比较内容 ===
@@ -98,11 +98,14 @@ public class CoreComparator {
             }
 
             return diffWriter.getDiffCount().get();
-        } catch (JobStoppedException | VerifyDiffWriter.DiffLimitExceededException e) {
+        } catch (JobStoppedException e) {
             // 【特殊处理】用户叫停
             log.warn("任务被中断: {}", e.getMessage());
             // 此时应该把状态重置回 NEW，或者保持 TRANSCODING 等待下次“启动修复”
             // 建议：不做处理，直接 return。因为下次启动时的 StartupTaskResetter 会负责把 TRANSCODING 重置为 NEW
+            return -1;
+        } catch (VerifyDiffWriter.DiffLimitExceededException e) {
+            log.warn("差异过多截断: {}", e.getMessage());
             return -1;
         }
 
@@ -116,7 +119,10 @@ public class CoreComparator {
         int len = Math.min(dbRow.length, fileRow.length) - 1;
 
         for (int i = 0; i < len; i++) {
-            if (!isCellEqual(dbRow[i], fileRow[i], colTypes[i])) {
+            Object dbVal = dbRow[i];
+            String fileVal = fileRow[i];
+            int type = colTypes[i];
+            if (!isCellEqual(dbVal, fileVal, type)) {
                 return false;
             }
         }
@@ -124,48 +130,66 @@ public class CoreComparator {
     }
 
     /**
-     * 单元格比对（增强健壮性）
+     * 单元格比对逻辑
      */
     private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
-        // 1. 空值处理
-        boolean dbNull = (dbVal == null);
-        boolean fileNull = (fileStr == null || fileStr.isEmpty() || "null".equalsIgnoreCase(fileStr));
+        // 1. 预处理 CSV 值
+        String csvVal = (fileStr == null) ? "" : fileStr.trim();
+        boolean fileIsEmpty = csvVal.isEmpty() || "null".equalsIgnoreCase(csvVal);
 
-        if (dbNull && fileNull) return true;
-        if (dbNull || fileNull) return false;
+        // 2. DB 为 NULL 的情况
+        if (dbVal == null) {
+            // DB=null, CSV="" 或 "null" -> 视为相等
+            return fileIsEmpty;
+        }
 
-        String dbStr = String.valueOf(dbVal);
-        String csvVal = fileStr.trim(); // CSV 读取通常需要 trim
+        // 3. DB 不为 NULL，但 CSV 为空的情况
+        if (fileIsEmpty) {
+            // 特殊处理：如果 DB 是空字符串 ""，则相等
+            String dbStr = String.valueOf(dbVal).trim();
+            if (dbStr.isEmpty()) return true;
+
+            // 特殊处理数值：如果 CSV="" 而 DB=0 或 0.00，是否视为相等？
+            // 如果您希望严格比对，请删除下面这段 case；如果希望宽容，请保留
+            /*
+            if (isNumeric(sqlType)) {
+                 try {
+                     return new BigDecimal(dbStr).compareTo(BigDecimal.ZERO) == 0;
+                 } catch (Exception e) {}
+            }
+            */
+
+            // 默认情况：DB有值，CSV没值 -> 不相等
+            return false;
+        }
+
+        // 4. 双方都有值 -> 类型比对
+        String dbStr = String.valueOf(dbVal).trim();
 
         switch (sqlType) {
-            case Types.CHAR:
-            case Types.VARCHAR:
-            case Types.LONGVARCHAR:
-                // 数据库取出的定长 CHAR 可能带空格，需要 trim
-                return dbStr.trim().equals(csvVal);
-
             case Types.NUMERIC:
             case Types.DECIMAL:
             case Types.DOUBLE:
             case Types.FLOAT:
-                // 【核心修复】数值比较使用 BigDecimal，解决 1.00 != 1.0 的问题
+            case Types.INTEGER:
+            case Types.BIGINT:
                 try {
-                    BigDecimal d1 = new BigDecimal(dbStr);
-                    BigDecimal d2 = new BigDecimal(csvVal);
-                    return d1.compareTo(d2) == 0;
+                    // 使用 BigDecimal 解决 0.00 vs 0 的问题
+                    return new BigDecimal(dbStr).compareTo(new BigDecimal(csvVal)) == 0;
                 } catch (Exception e) {
                     return false;
                 }
 
             case Types.TIMESTAMP:
             case Types.DATE:
-                // 时间比较建议归一化为字符串或 Timestamp 对象
-                // 简单处理：截取前19位 (yyyy-MM-dd HH:mm:ss) 忽略毫秒差异，视业务需求而定
+                // 简单比对：截取前19位 (忽略毫秒差异，如果业务允许)
+                // 或者复用之前的 parseTimestamp 精确比对
                 if (dbStr.length() > 19) dbStr = dbStr.substring(0, 19);
                 if (csvVal.length() > 19) csvVal = csvVal.substring(0, 19);
                 return dbStr.equals(csvVal);
 
             default:
+                // 字符串比对
                 return dbStr.equals(csvVal);
         }
     }
@@ -185,6 +209,11 @@ public class CoreComparator {
         return sb.toString();
     }
 
+    private boolean isNumeric(int sqlType) {
+        return sqlType == Types.NUMERIC || sqlType == Types.DECIMAL ||
+                sqlType == Types.INTEGER || sqlType == Types.BIGINT ||
+                sqlType == Types.DOUBLE || sqlType == Types.FLOAT;
+    }
 
     // 辅助：获取数组最后一个元素作为行号
     private Long getRowNo(Object row) {

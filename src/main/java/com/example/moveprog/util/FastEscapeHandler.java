@@ -1,6 +1,9 @@
 package com.example.moveprog.util;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import java.nio.charset.CharsetEncoder;
+import java.util.Objects;
 
 public class FastEscapeHandler {
 
@@ -15,11 +18,11 @@ public class FastEscapeHandler {
      * 2. 在收集模式下遇到另一个 '\'，则结束收集，将缓冲区解析为 Hex -> Char
      * 3. 支持转义符本身的转义：即 "\\" 会被解析为 "\"
      */
-    public static String unescape(String input) {
-        if (input == null) return null;
+    public static Pair<Boolean,String> unescape(String input) {
+        if (input == null) return Pair.of(false,null);
         // 快速路径：如果不含转义符，直接返回原串，零拷贝
         if (input.indexOf('\\') == -1) {
-            return input;
+            return Pair.of(false,input);
         }
 
         StringBuilder out = new StringBuilder(input.length());
@@ -72,7 +75,8 @@ public class FastEscapeHandler {
             out.append('\\').append(hexBuffer);
         }
 
-        return out.toString();
+        String processed = out.toString();
+        return Pair.of(Objects.equals(input,processed), processed);
     }
 
     /**
