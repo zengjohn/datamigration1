@@ -223,12 +223,6 @@ public class AppProperties {
      */
     @Data
     public static class TranscodeJob {
-        @NotNull(message = "转码输出目录 outputDir 不能为空")
-        private String outputDir;
-
-        @NotNull(message = "转码错误目录 errorDir 不能为空")
-        private String errorDir;
-
         /**
          * 最大转码错误行，超过则转码状态变成失败
          */
@@ -260,9 +254,6 @@ public class AppProperties {
 
         @Min(value = 1, message = "最大差异数 max-diff-count 不能小于 1")
         private int maxDiffCount = 1000;
-
-        @NotNull(message = "验证结果目录不能为空")
-        private String verifyResultBasePath;
 
         /**
          * 验证通过后删除拆分文件

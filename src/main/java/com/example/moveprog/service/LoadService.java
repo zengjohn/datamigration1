@@ -30,6 +30,7 @@ public class LoadService {
     private final MigrationJobRepository jobRepo;
 
     private final JobControlManager jobControlManager;
+    private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     private final AppProperties config;
 
@@ -54,13 +55,7 @@ public class LoadService {
             List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(qianyi.getDdlFilePath());
 
             // 3. 获取待装载切分文件 (待装载)
-            MigrationJob job = jobRepo.findById(csvSplit.getJobId()).orElseThrow(() -> new RuntimeException("作业配置不存在"));
-            // 准备数据库连接信息
-            String url = job.getTargetDbUrl() + config.getLoadJdbc().getUrlOptions();
-            String user = job.getTargetDbUser();
-            String password = job.getTargetDbPass();
-
-            loadSingleSplitFile(detailById.getTableName(), csvSplit, columnNames, url, user, password);
+            loadSingleSplitFile(csvSplit, columnNames);
 
             // 2. 成功提交 -> 待验证
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.WAIT_VERIFY, null);
@@ -80,22 +75,32 @@ public class LoadService {
 
     /**
      * 单个切分文件装载 (原子操作：删 + 插)
-     * @param tableName
      * @param split
      * @param columnNames csv ddl中定义的列名
      */
-    public void loadSingleSplitFile(String tableName, CsvSplit split, List<String> columnNames, String url, String user, String pwd) {
-        log.info("开始装载切分文件: tableName: {}, split id: {}", tableName, split.getId());
+    public void loadSingleSplitFile(CsvSplit split, List<String> columnNames) {
+        Long detailId = split.getDetailId();
+        QianyiDetail qianyiDetail = detailRepo.findById(detailId).orElseThrow();
+        String tableName = qianyiDetail.getTableName();
+        log.info("开始装载切分文件: tableName: {}, split id: {}", qianyiDetail.getTableName(), split.getId());
 
-        try (Connection conn = DriverManager.getConnection(url, user, pwd)) {
+        try {
+            // Step 1: 幂等删除 (根据 csvid 清理旧数据)
+            targetDatabaseConnectionManager.deleteLoadOldData(tableName, detailId, split.getId());
+        } catch (Exception e) {
+            log.error("清除已经装载的数据失败: Path={}", split.getSplitFilePath(), e);
+            split.setStatus(CsvSplitStatus.FAIL_LOAD);
+            split.setErrorMsg(e.getMessage());
+            splitRepo.save(split);
+            throw new RuntimeException(e);
+        }
+
+
+        try (Connection conn = targetDatabaseConnectionManager.getConnection(split.getDetailId())) {
             executeSqlsBeforeLoad(conn);
 
             // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)
             // 注意：LOAD DATA LOCAL INFILE 需要特殊的驱动设置
-            // Step 1: 幂等删除 (根据 csvid 清理旧数据)
-            String deleteSql = "DELETE FROM " + tableName + " WHERE csvid=" + split.getId();
-            executeUpdateSql(conn, deleteSql);
-
             // Step 2: 构造 LOAD DATA SQL
             String loadSql = generateLoadSql(tableName, split, columnNames);
 
@@ -105,7 +110,7 @@ public class LoadService {
             // 简单方式：
             // boolean autoCommit = config.getLoadJdbc().isAutoCommit();
             // load data infile 数据库自己会处理事务（提交或者回滚，程序不用显式出来）
-            executeUpdateSql(conn, loadSql);
+            targetDatabaseConnectionManager.executeUpdateSql(conn, loadSql);
 
             // Step 3: 标记成功
             split.setStatus(CsvSplitStatus.WAIT_VERIFY);
@@ -116,7 +121,7 @@ public class LoadService {
             split.setStatus(CsvSplitStatus.FAIL_LOAD);
             split.setErrorMsg(e.getMessage());
             splitRepo.save(split);
-            throw new RuntimeException(e); // 抛出异常以便 CompletableFuture 感知, 以及回滚事务
+            throw new RuntimeException(e);
         }
     }
 
@@ -131,15 +136,6 @@ public class LoadService {
                     stmt.execute(sqlStr);
                 }
             }
-        }
-    }
-
-    private void executeUpdateSql(Connection conn, String sql) throws SQLException {
-        try(Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(sql);
-        } catch (SQLException e) {
-            log.error("failed to execute {}", sql);
-            throw e;
         }
     }
 
@@ -176,7 +172,7 @@ public class LoadService {
         sb.append("source_row_no");
         sb.append(")");
         // -- 【关键】在这里把当前的 csvid 赋值给每一行
-        sb.append("SET csvid=").append(splitId);
+        sb.append(" SET csvid=").append(splitId);
 
         return sb.toString();
     }

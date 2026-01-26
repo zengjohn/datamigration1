@@ -30,6 +30,12 @@ public class MigrationJob {
     private String sourceDirectory;       // 监视目录
 
     /**
+     * 输出文件目录(工作目录)
+     */
+    @Column(nullable = false)
+    private String outDirectory;
+
+    /**
      * csv迁移到目标库的配置
      */
     @Column(nullable = false)

@@ -8,7 +8,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
-public abstract class SchemaParseUtil {
+public class SchemaParseUtil {
 
     /**
      * 解析 DDL CSV 文件获取列名

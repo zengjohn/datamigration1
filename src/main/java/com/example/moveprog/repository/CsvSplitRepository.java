@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -30,9 +31,13 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
      * (可选) 删除关联的切分记录
      * 用途: 如果需要重置整个转码过程，可能需要先清理旧的切分记录
      */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM CsvSplit s WHERE s.detailId = :detailId")
     void deleteByDetailId(Long detailId);
 
     @Modifying
+    @Transactional
     @Query("DELETE FROM CsvSplit s WHERE s.qianyiId = :qianyiId")
     void deleteByQianyiId(Long qianyiId);
 
@@ -41,6 +46,7 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
     List<CsvSplit> findByJobId(Long jobId);
 
     @Modifying
+    @Transactional
     @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.status = :oldStatus")
     int resetStatus(CsvSplitStatus oldStatus, CsvSplitStatus newStatus);
 

@@ -7,7 +7,7 @@ import java.util.Random;
 
 public class TestDataGenerator {
     // 基础配置
-    private static final String OUT_DIR = "testdata";
+    private static final String OUT_DIR = "/data/testdata";
     // 您的项目使用的是 ICU4J 的 x-IBM1388
     private static final String CHARSET_IBM = "x-IBM1388";
     private static final String CHARSET_UTF8 = "UTF-8";

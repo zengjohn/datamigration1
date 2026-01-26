@@ -1,5 +1,6 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -24,7 +25,7 @@ public class VerifyDiffWriter implements AutoCloseable {
 
     public VerifyDiffWriter(String basePath, Long splitId, int maxDiff) throws IOException {
         Files.createDirectories(Paths.get(basePath));
-        this.filePath = Paths.get(basePath, "split_" + splitId + "_diff.txt").toString();
+        this.filePath = MigrationOutputDirectorUtil.verifyResultFile(basePath, splitId);
         // 延迟创建文件：只有真正写入时才创建 writer，避免生成大量空文件
         this.maxDiff = maxDiff;
     }

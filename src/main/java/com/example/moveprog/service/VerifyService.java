@@ -9,6 +9,7 @@ import com.example.moveprog.service.impl.CsvRowIterator;
 import com.example.moveprog.service.impl.JdbcRowIterator;
 import com.example.moveprog.util.CharsetFactory;
 import com.example.moveprog.util.FastEscapeHandler;
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -46,9 +48,10 @@ public class VerifyService {
         if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.VERIFYING, null)) return;
 
         CsvSplit split = splitRepo.findById(splitId).orElseThrow();
+        MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElseThrow();
 
         // 2. 准备迭代器
-        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(split);
+        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(migrationJob.getOutDirectory(), split);
              JdbcRowIterator dbIter = createDbIterator(split);
              CloseableRowIterator<String> fileIter = createFileIterator(split)) {
 
@@ -62,9 +65,9 @@ public class VerifyService {
                 log.info("校验通过: 切片 ID={}", splitId);
                 // 校验通过，删除可能的空差异文件（如果有的话）
                 if (config.getVerify().isDeleteSplitVerifyPass()) {
-                    deleteSplitFile(splitId);
+                    deleteSplitFile(split);
                 }
-                deleteEmptyVerifyResultFile(splitId);
+                deleteEmptyVerifyResultFile(migrationJob.getId(), splitId);
                 stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验通过");
             } else {
                 log.error("校验失败: 切片 ID={}，发现 {} 处差异", splitId, diffCount);
@@ -88,8 +91,9 @@ public class VerifyService {
         }
     }
 
-    private VerifyDiffWriter createVerifyDiffWriter(CsvSplit split) throws IOException {
-        return new VerifyDiffWriter(config.getVerify().getVerifyResultBasePath(), split.getId(), config.getVerify().getMaxDiffCount());
+    private VerifyDiffWriter createVerifyDiffWriter(String outDirectory, CsvSplit split) throws IOException {
+        String verifyResultBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory);
+        return new VerifyDiffWriter(verifyResultBasePath, split.getId(), config.getVerify().getMaxDiffCount());
     }
 
     private JdbcRowIterator createDbIterator(CsvSplit split) throws Exception {
@@ -127,14 +131,7 @@ public class VerifyService {
             if (split.getStartRowNo() > 1) {
                 settings.setNumberOfRowsToSkip(split.getStartRowNo());
             }
-            // 【重要补丁】
-            // 如果 TranscodeService 是按“输出行数”记录的 rowCount，而中间有行报错丢弃了，
-            // 那么 split.getRowCount() 就会比实际源文件行数小。
-            // 导致 univocity 只读了前 N 行就停了，刚好和 DB 里的行数匹配，导致 "假通过"。
-            // 建议：如果是溯源模式，且只有一个切片（或通过逻辑判断），尝试多读或者不设上限。
-            // 现在的临时方案：不完全信任 rowCount，尝试多读一点（比如 +1000），让 CoreComparator 去发现 "文件有数据但DB缺失"
-            long safeRowCount = split.getRowCount() + 10000; // 故意多读，探测是否有遗漏行
-            settings.setNumberOfRecordsToRead(safeRowCount);
+            settings.setNumberOfRecordsToRead(split.getRowCount());
             CsvParser csvParser = new CsvParser(settings);
             // 配置读取限制
             // 读取源文件：偏移量通常是 0 (因为 context.currentLine() 就是真实行号)
@@ -179,31 +176,28 @@ public class VerifyService {
         }
     }
 
-    private void deleteSplitFile(Long splitId) {
-        String splitFilePath = getSplitFilePath(splitId);
+    private void deleteSplitFile(CsvSplit split) {
+        String splitFilePath = split.getSplitFilePath();
         File splitFile = new File(splitFilePath);
         if (splitFile.exists()) {
             splitFile.delete();
         }
     }
 
-    private void deleteEmptyVerifyResultFile(Long splitId) {
-        String diffFilePath = getDiffFilePath(splitId);
+    private void deleteEmptyVerifyResultFile(Long jobId, Long splitId) {
+        String diffFilePath = getDiffFilePath(jobId, splitId);
         File diffFile = new File(diffFilePath);
         if (diffFile.exists() && diffFile.length() == 0) {
             diffFile.delete();
         }
     }
 
-    private String getSplitFilePath(Long splitId) {
-        // 结果文件路径: /path/split_100_diff.txt
-        String diffFilePath =  config.getVerify().getVerifyResultBasePath() + "split_" + splitId + "_diff.txt";
-        return diffFilePath;
-    }
-
-    private String getDiffFilePath(Long splitId) {
-        String verifyResultBasePath = config.getVerify().getVerifyResultBasePath();
-        return Paths.get(verifyResultBasePath, "split_" + splitId + "_diff.txt").toString();
+    private String getDiffFilePath(Long jobId, Long splitId) {
+        MigrationJob migrationJob = jobRepo.findById(jobId).orElseThrow();
+        String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(
+                MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory()),
+                splitId);
+        return verifyResultFile;
     }
 
 }

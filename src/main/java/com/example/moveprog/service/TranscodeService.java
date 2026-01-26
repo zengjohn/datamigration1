@@ -2,6 +2,7 @@ package com.example.moveprog.service;
 
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.CsvSplit;
+import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -13,16 +14,18 @@ import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
 import com.example.moveprog.util.CharsetFactory;
 import com.example.moveprog.util.FastEscapeHandler;
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import com.google.gson.Gson;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import com.univocity.parsers.csv.CsvWriter;
 import com.univocity.parsers.csv.CsvWriterSettings;
-import jakarta.transaction.Transactional;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.*;
 import java.nio.charset.Charset;
@@ -43,12 +46,13 @@ import java.util.stream.Collectors;
 public class TranscodeService {
     private final StateManager stateManager;
 
-    private final MigrationJobRepository migraRepo;
+    private final MigrationJobRepository jobRepository;
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
 
     private final JobControlManager jobControlManager;
+    private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
@@ -91,19 +95,46 @@ public class TranscodeService {
         }
     }
 
-    private void cleanUpOldSplits(Long detailId) {
-        List<CsvSplit> byDetailIdAndStatuses = splitRepo.findByDetailIdAndStatus(detailId, CsvSplitStatus.WAIT_LOAD);
+    /**
+     * 清楚旧的拆分记录
+     * @param detailId
+     */
+    public void cleanUpOldSplits(Long detailId) {
+        QianyiDetail qianyiDetail = detailRepo.findById(detailId).orElse(null);
+        if (Objects.isNull(qianyiDetail)) {
+            return;
+        }
+        MigrationJob migrationJob = jobRepository.findById(qianyiDetail.getJobId()).orElseThrow();
+        String outDirectory = migrationJob.getOutDirectory();
+
+        // 同时也建议物理删除磁盘上的临时文件（如果有残留）
+        List<CsvSplit> byDetailIdAndStatuses = splitRepo.findByDetailId(detailId);
+        if (Objects.nonNull(byDetailIdAndStatuses) && !byDetailIdAndStatuses.isEmpty()) {
+            for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
+                String splitFilePath = byDetailIdAndStatus.getSplitFilePath(); // 保存的是全路径
+                try {
+                    Files.deleteIfExists(Path.of(splitFilePath));
+                } catch (Exception e){}
+
+                String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(
+                        MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory),
+                        byDetailIdAndStatus.getId());
+                try {
+                    Files.deleteIfExists(Path.of(verifyResultFile));
+                } catch (Exception e){}
+            }
+
+            for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
+                try {
+                    targetDatabaseConnectionManager.deleteLoadOldData(qianyiDetail.getTableName(), detailId, byDetailIdAndStatus.getId());
+                } catch (Exception e) {
+                }
+            }
+        }
 
         // DELETE FROM t_csv_split WHERE detail_id = ?
         splitRepo.deleteByDetailId(detailId);
 
-        // 同时也建议物理删除磁盘上的临时文件（如果有残留）
-        for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
-            String splitFilePath = byDetailIdAndStatus.getSplitFilePath();
-            try {
-                Files.deleteIfExists(Path.of(splitFilePath));
-            } catch (Exception e){}
-        }
     }
 
     /**
@@ -123,8 +154,12 @@ public class TranscodeService {
         // 【关键配置】使用非严格模式，允许方案B捕获替换字符
         boolean strictMode = false;
 
-        Qianyi findQianyiById = qianyiRepo.findById(qianyiId).orElse(null);
+        Qianyi findQianyiById = qianyiRepo.findById(qianyiId).orElseThrow();
+        MigrationJob migrationJob = jobRepository.findById(findQianyiById.getJobId()).orElseThrow();
         List<String> ddlFilePath = SchemaParseUtil.parseColumnNamesFromDdl(findQianyiById.getDdlFilePath());
+        String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
+        String transcodeSplitDirectory = MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob.getOutDirectory());
+
         int expectedColumns = ddlFilePath.size();
 
         // 【修改点 1】新增：创建 Encoder (用于新版验证) 和获取配置开关
@@ -153,13 +188,12 @@ public class TranscodeService {
             CsvWriterContext csvWriterContext = null;
             CsvWriter errorWriter = null; // 新增：错误文件 Writer
             Path currentOutPath = null;
-            long currentFileRows = 0;
             long errorCount = 0;
 
             try {
                 // 确保输出目录存在
-                Files.createDirectories(Paths.get(config.getTranscodeJob().getOutputDir()));
-                Files.createDirectories(Paths.get(config.getTranscodeJob().getErrorDir()));
+                Files.createDirectories(Paths.get(transcodeSplitDirectory));
+                Files.createDirectories(Paths.get(errorDirectory));
 
                 while (null != (originalLine = parser.parseNext())) {
                     // 【埋点】每处理 1000 行检查一次
@@ -198,7 +232,7 @@ public class TranscodeService {
                     // --- 3. 发现错误，写入错误文件 ---
                     if (errorType != null) {
                         if (errorWriter == null) {
-                            Path errorPath = Paths.get(config.getTranscodeJob().getErrorDir(), detailId + "_error.csv");
+                            Path errorPath = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(errorDirectory, detailId));
                             errorWriter = createErrorWriter(errorPath);
                             // 表头：包含行级Base64 和 列级JSON
                             errorWriter.writeRow(new String[]{
@@ -229,7 +263,7 @@ public class TranscodeService {
                     // --- 以下是正常的成功处理逻辑 ---
                     // 懒加载创建文件
                     if (csvWriterContext == null) {
-                        currentOutPath = Paths.get(config.getTranscodeJob().getOutputDir(), detailId + "_" + fileIndex + ".csv");
+                        currentOutPath = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(transcodeSplitDirectory, detailId, fileIndex));
                         csvWriterContext = createUtf8Writer(currentOutPath, currentLineNoFromContext);
                     }
 
@@ -241,7 +275,6 @@ public class TranscodeService {
                     newRow[rowToWrite.length] = currentLineNoFromContext; // ia-ibm1388-lineno
 
                     csvWriterContext.csvWriter.writeRow(newRow);
-                    currentFileRows++;
                     lineNo++;
 
                     // 进度更新 (每 5000 行更新一次，避免频繁 IO)
@@ -252,22 +285,21 @@ public class TranscodeService {
                     }
 
                     // 3. 切分文件
-                    if (currentFileRows >= perfConfig.getSplitRows()) {
+                    if (lineNo-csvWriterContext.startLineNo >= perfConfig.getSplitRows()) {
                         Long startLineNo = csvWriterContext.startLineNo;
                         csvWriterContext.close();
                         csvWriterContext = null;
                         fileIndex++;
                         // 保存切分记录到数据库
-                        saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, currentFileRows);
-                        currentFileRows = 0;
+                        saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, lineNo-startLineNo);
                     }
                 }
 
-                if (currentFileRows > 0) {
+                if (lineNo-csvWriterContext.startLineNo > 0) {
                     Long startLineNo = csvWriterContext.startLineNo;
                     csvWriterContext.close();
                     // 保存切分记录到数据库
-                    saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, currentFileRows);
+                    saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, lineNo-startLineNo);
                 }
             } finally {
                 if (csvWriterContext != null) {
@@ -416,8 +448,7 @@ public class TranscodeService {
 
                 // 比对：原始串 (含 \HEX\) vs 还原串 (含 \HEX\)
                 // TODO 改函数有bug, 先禁用
-                //  return originalCell.equals(restored);
-                return true;
+                return originalCell.equals(restored);
             } else {
                 // --- 旧模式：标准回转 (Standard版) ---
                 // 1. 强制转为字节

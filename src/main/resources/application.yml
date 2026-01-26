@@ -96,8 +96,6 @@ app:
 
   # 验证配置 (保留之前的)
   transcode-job:
-    output-dir: /data/moveprog/output_split/
-    error-dir: /data/moveprog/output_error/
     max-error-count: 1000
 
   load-jdbc:
@@ -110,7 +108,6 @@ app:
 
   verify:
     strategy: USE_SOURCE_FILE
-    verify-result-base-path: /data/moveprog/verify_result
     max-diff-count: 1000
 
 logging:

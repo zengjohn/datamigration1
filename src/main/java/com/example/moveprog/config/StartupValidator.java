@@ -8,7 +8,6 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
-import java.io.File;
 import java.sql.Connection;
 
 @Component
@@ -17,7 +16,6 @@ import java.sql.Connection;
 @RequiredArgsConstructor
 public class StartupValidator implements ApplicationRunner {
 
-    private final AppProperties appProperties;
     private final DataSource dataSource;
 
     @Override
@@ -25,10 +23,7 @@ public class StartupValidator implements ApplicationRunner {
         log.info(">>> 开始应用启动自检...");
 
         try {
-            // 1. 调用 AppProperties 里的 validate (或者在这里直接校验)
-            validateDirectories();
-
-            // 2. 校验数据库连接
+            // 校验数据库连接
             validateDatabase();
 
             log.info("<<< 应用自检通过，服务正常启动。");
@@ -42,47 +37,6 @@ public class StartupValidator implements ApplicationRunner {
             // 强制退出 JVM (非 0 状态码表示异常退出)
             System.exit(1);
         }
-    }
-
-    /**
-     * 校验配置目录
-     */
-    private void validateDirectories() {
-        AppProperties.TranscodeJob transcodeJob = appProperties.getTranscodeJob();
-
-        // 获取配置的目录
-        String outputDir = transcodeJob.getOutputDir();
-        checkDir("转码文件输出目录", outputDir);
-
-        String errorDir = transcodeJob.getErrorDir();
-        checkDir("转码报错信息输出目录", errorDir);
-
-        String verifyResultDir = appProperties.getVerify().getVerifyResultBasePath();
-        checkDir("验证差异结果目录", verifyResultDir);
-    }
-
-    private void checkDir(String name, String path) {
-        if (path == null || path.trim().isEmpty()) {
-            throw new RuntimeException(name + " 未配置，请检查 application.yml");
-        }
-        File dir = new File(path);
-        if (!dir.exists()) {
-            // 策略 A: 自动创建 (推荐)
-            boolean created = dir.mkdirs();
-            if (created) {
-                log.info("目录不存在，已自动创建: {}", path);
-            } else {
-                throw new RuntimeException("目录不存在且无法自动创建: " + path + " (请检查权限)");
-            }
-        } else if (!dir.isDirectory()) {
-            throw new RuntimeException(name + " 路径被占用且不是文件夹: " + path);
-        } else if (!dir.canWrite()) {
-            throw new RuntimeException(name + " 存在但无写权限: " + path);
-        }
-    }
-
-    private void validateEnumConstant() {
-
     }
 
     /**

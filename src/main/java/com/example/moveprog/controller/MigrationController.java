@@ -1,6 +1,5 @@
 package com.example.moveprog.controller;
 
-import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -9,7 +8,7 @@ import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.service.JobControlManager;
 import com.example.moveprog.service.StateManager;
-import jakarta.validation.Valid;
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -18,7 +17,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -41,7 +39,6 @@ public class MigrationController {
     // 假设你有一个内存管理器控制停止信号
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
     private final JobControlManager controlManager;
-    private final AppProperties config; // 注入配置以获取 Verify 结果目录
 
     // ===========================
     // Level 1: 作业管理 (Job)
@@ -55,8 +52,18 @@ public class MigrationController {
         if (job.getName() == null ||
                 job.getSourceDirectory() == null ||
                 job.getTargetDbUrl() == null ||
-                job.getTargetDbUser() == null) {
-            return ResponseEntity.badRequest().body("名称, 源目录, 目标库url, 目标库用户名 不能为空");
+                job.getTargetDbUser() == null ||
+                job.getOutDirectory() == null) {
+            log.error("名称, 源目录, 输出目录, 目标库url, 目标库用户名 不能为空");
+            return ResponseEntity.badRequest().body("名称, 源目录, 输出目录, 目标库url, 目标库用户名 不能为空");
+        }
+
+        try {
+            Path outPath = Paths.get(job.getOutDirectory());
+            MigrationOutputDirectorUtil.beSureNewDirectory(outPath);
+        } catch (Exception e) {
+            log.error("验证输出目录报错：" + e.getMessage());
+            return ResponseEntity.badRequest().body("验证输出目录报错：" + e.getMessage());
         }
 
         // 默认状态
@@ -101,7 +108,7 @@ public class MigrationController {
 
     @PostMapping("/batch/{id}/close")
     public ResponseEntity<?> closeBatch(@PathVariable Long id) {
-        Qianyi batch = qianyiRepo.findById(id).orElseThrow();
+        Qianyi batch = qianyiRepo.findById(id).orElseThrow(() -> new RuntimeException("batch " + id + " 记录不存在"));
 
         // 1. 检查是否所有 Detail 都已结束
         long unfinishedCount = detailRepo.countByQianyiIdAndStatusNot(id, DetailStatus.FINISHED);
@@ -125,8 +132,7 @@ public class MigrationController {
      */
     @PostMapping("/batch/{id}/retry")
     public ResponseEntity<?> retryBatch(@PathVariable Long id) {
-        Qianyi qianyi = qianyiRepo.findById(id).orElseThrow(() -> new RuntimeException("记录不存在"));
-
+        Qianyi qianyi = qianyiRepo.findById(id).orElseThrow(() -> new RuntimeException("batch " + id + " 记录不存在"));
         if (qianyi.getStatus() != BatchStatus.FAIL_PARSE) {
             return ResponseEntity.badRequest().body("只有解析失败(FAIL_PARSE)的任务才能重试");
         }
@@ -146,7 +152,7 @@ public class MigrationController {
     @GetMapping("/job/{jobId}/batches")
     public List<Qianyi> listBatches(@PathVariable Long jobId) {
         // 展示该作业下的 OK 文件处理情况
-        return qianyiRepo.findByJobId(jobId); // 需要在 QianyiRepo 加这个方法
+        return qianyiRepo.findByJobId(jobId);
     }
 
     // ===========================
@@ -180,7 +186,17 @@ public class MigrationController {
             // 1. 推算 .bad 文件路径
             // 假设规则是：在配置的 error 目录下，文件名与源文件相同，后缀加 .bad
             // 或者您在 TranscodeService 里生成的路径规则
-            Path badFileName = Paths.get(config.getTranscodeJob().getErrorDir(), id + "_error.csv");
+            QianyiDetail qianyiDetail = detailRepo.findById(id).orElse(null);
+            if (qianyiDetail == null) {
+                return ResponseEntity.badRequest().body("明细 " + id + "不存在");
+            }
+            MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElse(null);
+            if (migrationJob == null) {
+                return ResponseEntity.badRequest().body("job " + qianyiDetail.getJobId() + "不存在");
+            }
+
+            String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
+            Path badFileName = Paths.get(errorDirectory, id + "_error.csv");
             if (!badFileName.toFile().exists()) {
                 return ResponseEntity.ok("暂无失败记录文件 (或文件已被清理)");
             }
@@ -269,17 +285,21 @@ public class MigrationController {
 
         // 3. 物理清理 (必须要做)
         // 避免“新验证通过了，但旧的错误文件还在”的尴尬情况
-        deleteDiffFile(split.getId());
+        MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
+        if (migrationJob == null) {
+            return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
+        }
+        deleteDiffFile(migrationJob.getOutDirectory(), split);
 
         return ResponseEntity.ok("已加入重验队列");
     }
 
-    private void deleteDiffFile(Long splitId) {
+    private void deleteDiffFile(String outDirectory, CsvSplit split) {
         try {
-            String basePath = config.getVerify().getVerifyResultBasePath();
-            Path path = Paths.get(basePath, "split_" + splitId + "_diff.txt");
-            Files.deleteIfExists(path);
-            log.info("已清理旧差异文件: {}", path);
+            String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory);
+            String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId());
+            Files.deleteIfExists(Paths.get(verifyResultFile));
+            log.info("已清理旧差异文件: {}", verifyResultFile);
         } catch (Exception e) {
             log.warn("清理旧差异文件失败 (不影响主流程): {}", e.getMessage());
         }
@@ -292,15 +312,22 @@ public class MigrationController {
     public ResponseEntity<?> getDiffContent(@PathVariable Long id) {
         try {
             // 构造差异文件路径 (规则需与 VerifyService 一致)
-            String filename = "split_" + id + "_diff.txt";
-            Path path = Paths.get(config.getVerify().getVerifyResultBasePath(), filename);
-
-            if (!Files.exists(path)) {
+            CsvSplit split = splitRepo.findById(id).orElseThrow();
+            if (null == split) {
+                return ResponseEntity.badRequest().body("切片(id=" + id + ")不存在");
+            }
+            MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
+            if (migrationJob == null) {
+                return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
+            }
+            String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory());
+            Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId()));
+            if (!Files.exists(verifyResultFile)) {
                 return ResponseEntity.ok("暂无差异文件 (可能校验通过或文件已被清理)");
             }
 
             // 读取前 100 行 (防止文件过大撑爆浏览器)
-            List<String> lines = Files.readAllLines(path);
+            List<String> lines = Files.readAllLines(verifyResultFile);
             StringBuilder sb = new StringBuilder();
             int limit = Math.min(lines.size(), 200);
             for(int i=0; i<limit; i++) {
