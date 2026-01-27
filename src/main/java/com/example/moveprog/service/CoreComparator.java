@@ -11,6 +11,8 @@ import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
@@ -33,7 +35,7 @@ public class CoreComparator {
      */
     public long compareStreams(Long jobId, CloseableRowIterator<String> fileIter, JdbcRowIterator dbIter, VerifyDiffWriter diffWriter) throws IOException {
         // 1. 获取元数据 (用于打印列名)
-        int[] colTypes = dbIter.getColumnTypes();
+        int[] colSqlTypes = dbIter.getColumnTypes();
         String[] colNames = dbIter.getColumnNames();
 
         // 用于统计处理的行数（日志用）
@@ -86,8 +88,8 @@ public class CoreComparator {
                 else {
                     // 3. 行号一致，比对内容
                     // 核心修复：isRowEqual 返回 false 时才去拼接字符串，极大提升性能
-                    if (!isRowEqual(dbRow, fileRow, colTypes)) {
-                        String diffMsg = formatDiffDetail(dbRow, fileRow, colTypes, colNames, dbRowNo);
+                    if (!isRowEqual(dbRow, fileRow, colSqlTypes)) {
+                        String diffMsg = formatDiffDetail(dbRow, fileRow, colSqlTypes, colNames, dbRowNo);
                         diffWriter.writeDiff(diffMsg);
                     }
 
@@ -114,14 +116,14 @@ public class CoreComparator {
     /**
      * 快速比对行（不生成垃圾对象）
      */
-    private boolean isRowEqual(Object[] dbRow, String[] fileRow, int[] colTypes) {
+    private boolean isRowEqual(Object[] dbRow, String[] fileRow, int[] colSqlTypes) {
         // 注意：dbRow 和 fileRow 长度可能包含 row_no，比对时要排除最后一列
         int len = Math.min(dbRow.length, fileRow.length) - 1;
 
         for (int i = 0; i < len; i++) {
             Object dbVal = dbRow[i];
             String fileVal = fileRow[i];
-            int type = colTypes[i];
+            int type = colSqlTypes[i];
             if (!isCellEqual(dbVal, fileVal, type)) {
                 return false;
             }
@@ -129,10 +131,73 @@ public class CoreComparator {
         return true;
     }
 
+    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+        // 1. 处理 NULL
+        if (dbVal == null) {
+            return fileStr == null || fileStr.trim().isEmpty();
+        }
+        if (fileStr == null || fileStr.trim().isEmpty()) {
+            if (dbVal instanceof String) {
+                return ((String) dbVal).trim().isEmpty();
+            }
+            return false;
+        }
+
+        String csvVal = fileStr.trim();
+
+        switch (sqlType) {
+            // === 数值比较 (最关键) ===
+            case Types.DECIMAL:
+            case Types.NUMERIC:
+                BigDecimal dbDec = (BigDecimal) dbVal;
+                try {
+                    BigDecimal fileDec = new BigDecimal(csvVal);
+                    return dbDec.compareTo(fileDec) == 0;
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+
+            case Types.TINYINT:
+            case Types.SMALLINT:
+            case Types.INTEGER:
+            case Types.BIGINT:
+                // 数据库可能是 Integer 或 Long，统一转 String 或 Long 比较
+                try {
+                    long dbLong = ((Number) dbVal).longValue();
+                    long fileLong = Long.parseLong(csvVal);
+                    return dbLong == fileLong;
+                } catch (Exception e) {
+                    return false;
+                }
+
+                // === 时间比较 ===
+            case Types.DATE: {
+                return String.valueOf(dbVal).trim().equals(csvVal);
+            }
+
+            case Types.TIMESTAMP: {
+                Timestamp dbTime;
+                if (dbVal instanceof LocalDateTime) {
+                    dbTime = Timestamp.valueOf((LocalDateTime) dbVal);
+                } else if (dbVal instanceof Timestamp) {
+                    dbTime = (Timestamp) dbVal;
+                } else {
+                    dbTime = parseTimestamp(dbVal.toString());
+                }
+                Timestamp fileTime = parseTimestamp(csvVal);
+                return dbTime.compareTo(fileTime) == 0;
+            }
+
+            // === 字符串 ===
+            default:
+                return String.valueOf(dbVal).trim().equals(csvVal);
+        }
+    }
+
     /**
      * 单元格比对逻辑
      */
-    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+    private boolean isCellEqual_other(Object dbVal, String fileStr, int sqlType) {
         // 1. 预处理 CSV 值
         String csvVal = (fileStr == null) ? "" : fileStr.trim();
         boolean fileIsEmpty = csvVal.isEmpty() || "null".equalsIgnoreCase(csvVal);
@@ -209,12 +274,6 @@ public class CoreComparator {
         return sb.toString();
     }
 
-    private boolean isNumeric(int sqlType) {
-        return sqlType == Types.NUMERIC || sqlType == Types.DECIMAL ||
-                sqlType == Types.INTEGER || sqlType == Types.BIGINT ||
-                sqlType == Types.DOUBLE || sqlType == Types.FLOAT;
-    }
-
     // 辅助：获取数组最后一个元素作为行号
     private Long getRowNo(Object row) {
         // 如果某一边为 null，行号设为 MAX_VALUE 以便进入后续的判断分支
@@ -231,56 +290,19 @@ public class CoreComparator {
         return Long.parseLong(row[row.length - 1]);
     }
 
-    // 有时间时在将下面的按类型比对合并进来
-    private boolean isCellEqual_x1(Object dbVal, String fileStr, int sqlType) {
-        // 1. 处理 NULL
-        if (dbVal == null) {
-            return fileStr == null || fileStr.trim().isEmpty();
-        }
-        if (fileStr == null || fileStr.trim().isEmpty()) {
-            return false; // DB有值，文件没值
-        }
-        String csvVal = fileStr.trim();
-
-        switch (sqlType) {
-            // === 数值比较 (最关键) ===
-            case Types.DECIMAL:
-            case Types.NUMERIC:
-                BigDecimal dbDec = (BigDecimal) dbVal;
-                try {
-                    BigDecimal fileDec = new BigDecimal(csvVal);
-                    return dbDec.compareTo(fileDec) == 0;
-                } catch (NumberFormatException e) {
-                    return false;
-                }
-
-            case Types.INTEGER:
-            case Types.BIGINT:
-                // 数据库可能是 Integer 或 Long，统一转 String 或 Long 比较
-                try {
-                    long dbLong = ((Number) dbVal).longValue();
-                    long fileLong = Long.parseLong(csvVal);
-                    return dbLong == fileLong;
-                } catch (Exception e) {
-                    return false;
-                }
-
-                // === 时间比较 ===
-            case Types.TIMESTAMP:
-                Timestamp dbTime = (Timestamp) dbVal;
-                // 复用之前的 parseTimestamp 逻辑把 csvVal 转成 Timestamp
-                Timestamp fileTime = parseTimestamp(csvVal);
-                return dbTime.compareTo(fileTime) == 0;
-
-            // === 字符串 ===
-            default:
-                return String.valueOf(dbVal).trim().equals(csvVal);
-        }
+    private boolean isNumeric(int sqlType) {
+        return sqlType == Types.NUMERIC || sqlType == Types.DECIMAL ||
+                sqlType == Types.INTEGER || sqlType == Types.BIGINT ||
+                sqlType == Types.DOUBLE || sqlType == Types.FLOAT;
     }
+
+    private static final DateTimeFormatter[] DATE_FORMATS = {
+            DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    };
 
     // 定义多种可能的时间格式，用于解析 CSV 字符串
     // 这种带 [.SSSSSS] 的写法是关键，可选匹配微秒
-    private static final DateTimeFormatter[] DATE_FORMATS = {
+    private static final DateTimeFormatter[] DATETIME_FORMATS = {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
@@ -328,14 +350,6 @@ public class CoreComparator {
         }
 
         throw new RuntimeException("Unparseable date: " + val);
-    }
-
-    private boolean compareNumber(String v1, String v2) {
-        try {
-            return new BigDecimal(v1).compareTo(new BigDecimal(v2)) == 0;
-        } catch (Exception e) {
-            return false;
-        }
     }
 
 }

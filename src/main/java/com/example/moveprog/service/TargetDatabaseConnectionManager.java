@@ -24,12 +24,12 @@ public class TargetDatabaseConnectionManager {
     private final MigrationJobRepository jobRepo;
     private final AppProperties config;
 
-    public Connection getConnection(Long detailId) throws SQLException {
+    public Connection getConnection(Long detailId, boolean load) throws SQLException {
         QianyiDetail qianyiDetail = detailRepo.findById(detailId).orElseThrow();
         MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElseThrow();
 
         // 准备数据库连接信息
-        String url = migrationJob.getTargetDbUrl() + config.getLoadJdbc().getUrlOptions();
+        String url = migrationJob.getTargetDbUrl() + (load ? config.getLoadJdbc().getUrlOptions() : config.getVerify().getUrlOptions());
         String user = migrationJob.getTargetDbUser();
         String password = migrationJob.getTargetDbPass();
 
@@ -38,7 +38,7 @@ public class TargetDatabaseConnectionManager {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void deleteLoadOldData(String tableName, Long detailId, Long splitId) throws SQLException {
-        try (Connection conn = getConnection(detailId)) {
+        try (Connection conn = getConnection(detailId, true)) {
             String deleteSql = "DELETE FROM " + tableName + " WHERE csvid=" + splitId;
             executeUpdateSql(conn, deleteSql);
         }

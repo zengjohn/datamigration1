@@ -1,6 +1,7 @@
 package com.example.moveprog.service.impl;
 
 import com.example.moveprog.service.CloseableRowIterator;
+import com.example.moveprog.service.TargetDatabaseConnectionManager;
 import lombok.extern.slf4j.Slf4j;
 
 import java.sql.*;
@@ -18,12 +19,18 @@ public class JdbcRowIterator implements CloseableRowIterator {
     private final int colCount;
     private boolean hasNext;
 
-    public JdbcRowIterator(String url, String user, String pwd, String sql) throws SQLException {
+    public JdbcRowIterator(TargetDatabaseConnectionManager targetDatabaseConnectionManager, Long detailId, String sql, int fetchSize) throws SQLException {
         this.sql = sql;
 
-        this.conn = java.sql.DriverManager.getConnection(url, user, pwd);
+        this.conn = targetDatabaseConnectionManager.getConnection(detailId, false);
         this.ps = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-        this.ps.setFetchSize(Integer.MIN_VALUE); // 开启流式
+        if (fetchSize < 0) {
+            // 【关键】必须设置为 Integer.MIN_VALUE 才能开启 MySQL 的流式读取
+            this.ps.setFetchSize(Integer.MIN_VALUE); // 开启流式
+        } else {
+            this.ps.setFetchSize(fetchSize); // url中需要配置 useCursorFetch=true
+        }
+
         if (log.isDebugEnabled()) {
             log.debug("{} splitId: {}", sql);
         }

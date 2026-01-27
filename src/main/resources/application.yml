@@ -109,6 +109,8 @@ app:
   verify:
     strategy: USE_SOURCE_FILE
     max-diff-count: 1000
+    #url-options: "?Unicode=true&useSSL=false&characterEncoding=utf8&allowLoadLocalInfile=true&rewriteBatchedStatements=true&useServerPrepStmts=false&cachePrepStmts=false&tinyInt1isBit=false&yearIsDateType=false&socketTimeout=3600000&connectTimeout=30000&autoReconnect=true&failOverReadOnly=false&useCompression=true&tdsqlLoadDataMode=fast&tdsqlSkipSlaveCheck=true&tdsqlBatchSize=1000000"
+    #fetch-size: 100
 
 logging:
   level:

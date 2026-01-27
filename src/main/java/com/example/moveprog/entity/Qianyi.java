@@ -6,6 +6,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 批次表
  * 对应一个ok文件
  *   1. 对应一个Qianyi
  *   2. 包括一个schema定义文件路径(schema文件名就是表名)，一个或者多个待处理的IBM1388 csv文件路径

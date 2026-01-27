@@ -260,6 +260,8 @@ public class AppProperties {
          */
         private boolean deleteSplitVerifyPass = false;
 
+        private String urlOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
+        private int fetchSize = -1;
     }
 
 }

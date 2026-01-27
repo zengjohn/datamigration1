@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -40,6 +41,7 @@ public class VerifyService {
     private final CsvSplitRepository splitRepo;
 
     private final CoreComparator coreComparator; // 注入上一轮写的比对器
+    private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
@@ -108,13 +110,7 @@ public class VerifyService {
 
         // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
         String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = " + split.getId() + " ORDER BY source_row_no";
-
-        MigrationJob job = jobRepo.findById(split.getJobId()).orElseThrow();
-        String dbUrl = job.getTargetDbUrl();
-        String user = job.getTargetDbUser();
-        String pwd = job.getTargetDbPass();
-
-        JdbcRowIterator dbIter = new JdbcRowIterator(dbUrl, user, pwd, sql);
+        JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getDetailId(), sql, config.getVerify().getFetchSize());
         return dbIter;
     }
 

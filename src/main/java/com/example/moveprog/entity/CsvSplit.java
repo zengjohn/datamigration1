@@ -8,6 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
+ * 装载/验证任务表
  * 拆分切片 - csv(utf8编码)
  *   一个IBM1388 csv文件，为了支持并发装载， 会被转码拆分成多个utf8文件
  */

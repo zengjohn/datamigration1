@@ -5,7 +5,7 @@ import jakarta.persistence.*;
 import lombok.Data;
 
 /**
- * 迁移作业
+ * 迁移作业 主表
  *    1. 源目录(ok文件保存的文件夹)
  *    2. 目标库(csv文件转储tdsql目标库的配置)
  */

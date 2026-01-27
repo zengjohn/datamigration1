@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import java.time.LocalDateTime;
 
 /**
+ * 转码任务表
  * 对应一个IBM1388源csv文件
  */
 @Entity
