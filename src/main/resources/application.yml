@@ -39,6 +39,9 @@ spring:
 
 # 自定义应用配置
 app:
+  # 【关键】指定本机身份
+  current-node-ip: 192.168.37.100
+
   # CSV 配置
   csv:
     # 1. 源文件 IBM1388 配置

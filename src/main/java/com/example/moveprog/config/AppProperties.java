@@ -21,6 +21,12 @@ import java.util.List;
 @ConfigurationProperties(prefix = "app") // 对应 application.yml 中的 app:
 public class AppProperties {
 
+    /**
+     * 【新增】当前节点对外服务的 IP 地址
+     * 必须配置为局域网内其他机器可访问的 IP (如万兆网卡 IP)
+     */
+    private String currentNodeIp;
+
     // 1. CSV 相关配置 (对应 app.csv)
     // 嵌套配置类
     private Csv csv = new Csv();

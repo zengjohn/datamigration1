@@ -16,9 +16,9 @@ import java.time.LocalDateTime;
 @Table(name = "qianyi_detail", indexes = {
         @Index(name = "idx_job_id", columnList = "job_id"),
         @Index(name = "idx_qianyi_id", columnList = "qianyi_id"),
-        @Index(name = "idx_status", columnList = "status")
+        @Index(name = "idx_status_node", columnList = "status, node_id")
 })
-public class QianyiDetail {
+public class QianyiDetail extends BaseNodeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

@@ -516,6 +516,7 @@ public class TranscodeService {
 
     private void saveSplit(Long jobId, Long qianyiId, Long detailId, Path path, Long startLineNo, Long rowCount) {
         CsvSplit split = new CsvSplit();
+        split.setNodeId(config.getCurrentNodeIp());
         split.setJobId(jobId);
         split.setQianyiId(qianyiId);
         split.setDetailId(detailId);

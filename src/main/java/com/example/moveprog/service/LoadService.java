@@ -96,7 +96,7 @@ public class LoadService {
         }
 
 
-        try (Connection conn = targetDatabaseConnectionManager.getConnection(split.getDetailId())) {
+        try (Connection conn = targetDatabaseConnectionManager.getConnection(split.getDetailId(), true)) {
             executeSqlsBeforeLoad(conn);
 
             // 每次操作创建独立的连接 (或者你可以引入 DruidDataSource 动态创建连接池，这里用最简单的原生JDBC演示)

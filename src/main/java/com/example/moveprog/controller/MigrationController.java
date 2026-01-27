@@ -1,5 +1,6 @@
 package com.example.moveprog.controller;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -40,6 +41,8 @@ public class MigrationController {
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
     private final JobControlManager controlManager;
 
+    private final AppProperties config;
+
     // ===========================
     // Level 1: 作业管理 (Job)
     // ===========================
@@ -70,6 +73,7 @@ public class MigrationController {
         job.setStatus(JobStatus.ACTIVE);
 
         // 保存
+        job.setNodeId(config.getCurrentNodeIp());
         jobRepo.save(job);
 
         // 这里通常会触发一次 Scanner，让后台立即去扫描该目录

@@ -11,8 +11,10 @@ import lombok.Data;
  */
 @Entity
 @Data
-@Table(name = "migration_job")
-public class MigrationJob {
+@Table(name = "migration_job", indexes = {
+        @Index(name = "idx_status_node", columnList = "status, node_id")       // 加速状态过滤
+})
+public class MigrationJob extends BaseNodeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

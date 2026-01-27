@@ -1,5 +1,6 @@
 package com.example.moveprog.scheduler;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.dto.OkFileContent;
 import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.entity.Qianyi;
@@ -26,6 +27,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * 目录监控器
+ */
 @Component
 @Slf4j
 @RequiredArgsConstructor
@@ -35,6 +39,8 @@ public class DirectoryMonitor {
     private final MigrationJobRepository jobRepo;
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
+
+    private final AppProperties config;
     private final Gson gson = new Gson();
 
     @Scheduled(fixedDelay = 5000)
@@ -63,6 +69,7 @@ public class DirectoryMonitor {
         }
     }
     /**
+     * 机器 A 只处理 机器 A 的文件
      * 处理单个 OK 文件
      * 无论成功失败，都尽量保存记录，以免重复扫描或丢失错误现场
      */
@@ -77,6 +84,7 @@ public class DirectoryMonitor {
 
         // 初始化对象（先不保存，等解析成功再保存，或者捕获异常保存失败状态）
         Qianyi qianyi = new Qianyi();
+        qianyi.setNodeId(config.getCurrentNodeIp());
         qianyi.setJobId(job.getId());
         qianyi.setOkFilePath(okPath);
         // 默认表名：如果 JSON 解析挂了，用文件名兜底
@@ -151,6 +159,7 @@ public class DirectoryMonitor {
             // 5. 保存明细记录
             for (String absCsvPath : finalCsvPaths) {
                 QianyiDetail detail = new QianyiDetail();
+                detail.setNodeId(config.getCurrentNodeIp());
                 detail.setJobId(qianyi.getJobId());
                 detail.setQianyiId(qianyi.getId());
                 detail.setTableName(realTableName);

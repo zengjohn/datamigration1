@@ -18,9 +18,9 @@ import java.time.LocalDateTime;
         @Index(name = "idx_job_id", columnList = "job_id"),
         @Index(name = "idx_qianyi_id", columnList = "qianyi_id"),
         @Index(name = "idx_detail_id", columnList = "detail_id"), // 加速 findByDetailId
-        @Index(name = "idx_status", columnList = "status")       // 加速状态过滤
+        @Index(name = "idx_status_node", columnList = "status, node_id")       // 加速状态过滤
 })
-public class CsvSplit {
+public class CsvSplit extends BaseNodeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id; // 这就是目标表里的 csvid

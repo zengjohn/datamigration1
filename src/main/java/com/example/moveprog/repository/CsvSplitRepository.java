@@ -26,7 +26,14 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
      * 用途: LoadService 判断整个 Detail 是否可以进入下一阶段 (PASS 或 WAIT_VERIFY)
      */
     long countByDetailIdAndStatusNot(Long detailId, CsvSplitStatus status);
-    
+
+    // --- 【新增】给 Dispatcher 用的方法 ---
+    // 抢占装载/验证任务
+    List<CsvSplit> findTop20ByStatusAndNodeId(CsvSplitStatus status, String nodeId);
+
+    // 僵尸任务检测 (也只检测本机卡住的任务，别去管别的机器)
+    List<CsvSplit> findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus status, String nodeId, LocalDateTime time);
+
     /**
      * (可选) 删除关联的切分记录
      * 用途: 如果需要重置整个转码过程，可能需要先清理旧的切分记录

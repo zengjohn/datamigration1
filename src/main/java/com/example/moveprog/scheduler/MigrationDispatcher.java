@@ -84,34 +84,40 @@ public class MigrationDispatcher {
     @Autowired private Executor loadExecutor;
     @Autowired private Executor verifyExecutor;
 
+    // 机器 A 只抢占 机器 A 的任务
     // --- 2. 调度逻辑 (每 5 秒轮询) ---
     @Scheduled(fixedDelay = 5000)
     public void schedule() {
-        dispatchTranscode();
-        dispatchLoad();
-        dispatchVerify();
+        String myIp = config.getCurrentNodeIp(); // 从配置获取本机 IP
+
+        dispatchTranscode(myIp);
+        dispatchLoad(myIp);
+        dispatchVerify(myIp);
     }
 
     /**
+     * 机器 A 只负责救援 机器 A 的僵尸任务
      * 每 10 分钟运行一次
      * 检查那些"卡住"超过 30 分钟的任务
      */
     @Scheduled(fixedDelay = 600000)
     public void rescueStuckTasks() {
+        String myIp = config.getCurrentNodeIp();
+
         LocalDateTime timeThreshold = LocalDateTime.now().minusMinutes(30);
 
         // 1. 捞出处于 LOADING 状态 且 最后更新时间早于 30分钟前 的任务
-        List<CsvSplit> stuckLoadingSplits = splitRepo.findByStatusAndUpdateTimeBefore(CsvSplitStatus.LOADING, timeThreshold);
+        List<CsvSplit> stuckLoadingSplits = splitRepo.findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus.LOADING, myIp, timeThreshold);
         for (CsvSplit split : stuckLoadingSplits) {
-            log.error("发现僵尸任务 Split[{}]，卡在 LOADING 超过30分钟，强制重置。", split.getId());
+            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 LOADING 超过30分钟，强制重置。", myIp, split.getId());
             // 强制重置状态
             stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_LOAD, "系统自动重置Loading超时任务");
         }
 
         // 2. 捞出处于 VERIFYING 状态 且 最后更新时间早于 30分钟前 的任务
-        List<CsvSplit> stuckVerifyingSplits = splitRepo.findByStatusAndUpdateTimeBefore(CsvSplitStatus.LOADING, timeThreshold);
+        List<CsvSplit> stuckVerifyingSplits = splitRepo.findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus.LOADING, myIp, timeThreshold);
         for (CsvSplit split : stuckVerifyingSplits) {
-            log.error("发现僵尸任务 Split[{}]，卡在 VERIFYING 超过30分钟，强制重置。", split.getId());
+            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 VERIFYING 超过30分钟，强制重置。", myIp, split.getId());
             // 强制重置状态
             stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_VERIFY, "系统自动重置Verifying超时任务");
         }
@@ -119,10 +125,10 @@ public class MigrationDispatcher {
     }
 
     // --- 阶段 1: 调度转码 (针对 Detail) ---
-    private void dispatchTranscode() {
+    private void dispatchTranscode(String myIp) {
         // 1. 查出所有待转码的文件
         // SELECT * FROM t_detail WHERE status = 'NEW' LIMIT 5
-        List<QianyiDetail> details = detailRepo.findTop5ByStatus(DetailStatus.NEW);
+        List<QianyiDetail> details = detailRepo.findTop5ByStatusAndNodeId(DetailStatus.NEW, myIp);
         for (QianyiDetail d : details) {
             // 这里简单起见没加 Set 防抖，因为 Transcode 比较少，如有需要也可加
             transcodeExecutor.execute(() -> transcodeService.execute(d.getId()));
@@ -131,10 +137,10 @@ public class MigrationDispatcher {
 
     // --- 阶段 2: 调度装载 (针对 Split) ---
     // 【变化点】这里不再查 Detail，而是直接查 Split 表
-    private void dispatchLoad() {
+    private void dispatchLoad(String myIp) {
         // SELECT * FROM t_split WHERE status = 'WAIT_LOAD' LIMIT 20
         // 注意：这里可以一次取更多，因为装载通常比转码快
-        List<CsvSplit> splits = splitRepo.findTop20ByStatus(CsvSplitStatus.WAIT_LOAD);
+        List<CsvSplit> splits = splitRepo.findTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_LOAD, myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue; // 防抖
             inFlightSplits.add(s.getId());
@@ -150,9 +156,9 @@ public class MigrationDispatcher {
     }
 
     // --- 阶段 3: 调度校验 (针对 Split) ---
-    private void dispatchVerify() {
+    private void dispatchVerify(String myIp) {
         // SELECT * FROM t_split WHERE status = 'WAIT_VERIFY' LIMIT 20
-        List<CsvSplit> splits = splitRepo.findTop20ByStatus(CsvSplitStatus.WAIT_VERIFY);
+        List<CsvSplit> splits = splitRepo.findTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_VERIFY, myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue;
             inFlightSplits.add(s.getId());

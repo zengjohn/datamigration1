@@ -23,8 +23,10 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     /**
      * 查询特定状态的任务
      * 用途: MigrationDispatcher 抓取 "NEW" (待转码) 的任务
+     * // --- 原有的方法 (留给管理端/Nginx查看总进度用，查所有节点) ---
      */
     List<QianyiDetail> findByStatus(DetailStatus status);
+
 
     /**
      * 查询处于多个状态之一的任务
@@ -54,6 +56,14 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
 
     //Page<QianyiDetail> findByJobId(Long jobId, Pageable pageable);
     Page<QianyiDetail> findByQianyiId(Long qianyiId, Pageable pageable);
+
+
+    // --- 【新增】给 Dispatcher 用的方法 (只抢自己节点任务) ---
+    // 抢占转码任务：状态是 NEW 且 NodeId 是本机
+    List<QianyiDetail> findTop5ByStatusAndNodeId(DetailStatus status, String nodeId);
+
+    // 统计也是一样
+    long countByQianyiIdAndStatusNotAndNodeId(Long qianyiId, DetailStatus status, String nodeId);
 
     // 方法 A: 通过命名规范删除 (Spring Data JPA 自动实现)
     // 只要你的实体里有 qianyiId 这个字段，且是 Long 类型

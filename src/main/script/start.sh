@@ -43,6 +43,10 @@ JAVA_OPTS="-server -Xms2g -Xmx2g \
   -Dfile.encoding=UTF-8 \
   -Duser.timezone=Asia/Shanghai"
 
+# 自动获取本机 eth0 网卡的 IP (或者手动指定)
+# 这种 shell 脚本获取比 Java 内部获取稍微可控一些
+LOCAL_IP=$(ip addr show eth0 | grep "inet\b" | awk '{print $2}' | cut -d/ -f1)
+
 # =======================================================================
 # 4. 启动应用
 # =======================================================================
@@ -50,6 +54,7 @@ echo "Starting $APP_NAME..."
 echo "JAVA_HOME: $JAVA_HOME"
 echo "JAR: $JAR_PATH"
 echo "CONFIG: $CONFIG_DIR"
+echo "CURRENT IP: $LOCAL_IP"
 
 # 核心启动命令说明：
 # --spring.config.location: 强制指定配置文件目录，方便运维修改配置而不重打 Jar 包
@@ -57,6 +62,8 @@ echo "CONFIG: $CONFIG_DIR"
 nohup java $JAVA_OPTS \
   -jar "$JAR_PATH" \
   --spring.config.location="$CONFIG_DIR" \
+  --app.current-node-ip=$LOCAL_IP \
+  --server.port=8080
   > start.out 2>&1 &
 
 # 获取新启动的 PID
