@@ -217,7 +217,7 @@ class TranscodeServiceTest {
         verify(splitRepo).deleteByDetailId(detailId); // 验证 DB 删除调用
         // 验证是否调用了目标库清理
         try {
-            verify(targetDatabaseConnectionManager).deleteLoadOldData(any(), eq(detailId), eq(555L));
+            verify(targetDatabaseConnectionManager).deleteLoadOldData(eq(jobId), any(), eq(555L));
         } catch (Exception e) {
             fail("Exception verifying db call");
         }

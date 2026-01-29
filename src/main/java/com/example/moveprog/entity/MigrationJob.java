@@ -12,9 +12,9 @@ import lombok.Data;
 @Entity
 @Data
 @Table(name = "migration_job", indexes = {
-        @Index(name = "idx_status_node", columnList = "status, node_id")       // 加速状态过滤
+        @Index(name = "idx_status", columnList = "status")       // 加速状态过滤
 })
-public class MigrationJob extends BaseNodeEntity {
+public class MigrationJob {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -22,28 +22,29 @@ public class MigrationJob extends BaseNodeEntity {
     /**
      * 作业名称，作业的唯一标识 (unique)
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 100)
     private String name;
 
     /**
      * ok文件保存的目录(文件夹)
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String sourceDirectory;       // 监视目录
 
     /**
      * 输出文件目录(工作目录)
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String outDirectory;
 
     /**
      * csv迁移到目标库的配置
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 1000)
     private String targetDbUrl;
-    @Column(nullable = false)
+    @Column(nullable = false, length = 40)
     private String targetDbUser;
+    @Column(length = 40)
     private String targetDbPass;
 
     /**

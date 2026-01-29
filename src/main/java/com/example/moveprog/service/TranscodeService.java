@@ -25,8 +25,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.*;
 import java.nio.charset.Charset;
@@ -62,21 +60,16 @@ public class TranscodeService {
 
     // 去掉了 @Async，去掉了锁，纯同步逻辑。
     public void execute(Long detailId) {
-        log.info(">>> 开始转码 Detail: {}", detailId);
-        stateManager.updateDetailStatus(detailId, DetailStatus.TRANSCODING);
+        QianyiDetail detail = detailRepo.findById(detailId).orElseThrow();
+        if (detail == null || detail.getStatus() != DetailStatus.TRANSCODING) {
+            return;
+        }
+        log.info(">>> 开始转码, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
 
         try {
             // 【关键】开始真正的逻辑前，先清理掉可能的旧脏数据
             // 如果是重试的任务，可能之前已经生成了一部分 Split
             cleanUpOldSplits(detailId);
-
-            // 2. 【状态双重检查】(推荐)
-            // 防止在排队等待线程池期间，状态已被修改
-            QianyiDetail detail = detailRepo.findById(detailId).orElse(null);
-            if (detail == null || detail.getStatus() != DetailStatus.TRANSCODING) {
-                return;
-            }
-            log.info(">>> 开始转码, detail id: {}, 源文件: {}", detail.getId(), detail.getSourceCsvPath());
 
             transcodeSingleSourceFile(detail.getQianyiId(), detail.getId(), detail.getSourceCsvPath());
 
@@ -127,7 +120,7 @@ public class TranscodeService {
 
             for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
                 try {
-                    targetDatabaseConnectionManager.deleteLoadOldData(qianyiDetail.getTableName(), detailId, byDetailIdAndStatus.getId());
+                    targetDatabaseConnectionManager.deleteLoadOldData(migrationJob.getId(), qianyiDetail.getTableName(), byDetailIdAndStatus.getId());
                 } catch (Exception e) {
                 }
             }

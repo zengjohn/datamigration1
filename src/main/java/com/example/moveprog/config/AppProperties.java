@@ -38,6 +38,8 @@ public class AppProperties {
 
     private MigrationThreadPool migrationThreadPool = new MigrationThreadPool();
 
+    private String jdbcOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
+
     private LoadJdbc loadJdbc = new LoadJdbc();
 
     private Verify verify = new Verify();
@@ -236,6 +238,7 @@ public class AppProperties {
         private int maxErrorCount = 1000;
     }
 
+
     /**
      * 目标端装载时, 预先执行sql
      * 用于准备环境(比如禁用约束，日志等）
@@ -247,7 +250,18 @@ public class AppProperties {
                 "SET foreign_key_checks=0",
                 "SET sql_log_bin=0"
         );
-        private String urlOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
+
+        /**
+         * 【新增】JDBC Batch 大小
+         */
+        private int batchSize = 5000;
+
+        /**
+         * 【新增】是否使用 LOAD DATA LOCAL INFILE
+         * true: 使用极速模式 (默认)
+         * false: 使用通用 JDBC Batch Insert 模式 (保底, 慢)
+         */
+        private boolean useLocalInfile = true;
     }
 
     /**
@@ -266,7 +280,6 @@ public class AppProperties {
          */
         private boolean deleteSplitVerifyPass = false;
 
-        private String urlOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
         private int fetchSize = -1;
     }
 

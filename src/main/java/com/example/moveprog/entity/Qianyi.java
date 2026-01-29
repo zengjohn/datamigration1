@@ -31,7 +31,7 @@ public class Qianyi extends BaseNodeEntity {
     /**
      * OK文件路径
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String okFilePath;
     /**
      * 目标端表名 （目前的设计，要求一个ok文件中所有的csv文件都装载到同一张表)
@@ -41,7 +41,7 @@ public class Qianyi extends BaseNodeEntity {
     /**
      * schema文件路径
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String ddlFilePath;
 
     /**

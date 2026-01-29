@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,8 +60,21 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
 
 
     // --- 【新增】给 Dispatcher 用的方法 (只抢自己节点任务) ---
-    // 抢占转码任务：状态是 NEW 且 NodeId 是本机
-    List<QianyiDetail> findTop5ByStatusAndNodeId(DetailStatus status, String nodeId);
+    /**
+     * 抢占转码任务：状态是 NEW 且 NodeId 是本机
+     * 【黑科技】查询并锁定任务，自动跳过被锁定的行
+     * nativeQuery = true: 必须用原生 SQL 才能写 FOR UPDATE SKIP LOCKED
+     */
+    @Query(value = """
+        SELECT * FROM qianyi_detail 
+        WHERE status = :status 
+        AND node_id = :nodeId  -- 如果您用了节点绑定，加上这个更安全；没用则去掉
+        LIMIT 5 
+        FOR UPDATE SKIP LOCKED 
+        """, nativeQuery = true)
+    List<QianyiDetail> findAndLockTop5ByStatusAndNodeId(
+            @Param("status") String status,
+            @Param("nodeId") String nodeId);
 
     // 统计也是一样
     long countByQianyiIdAndStatusNotAndNodeId(Long qianyiId, DetailStatus status, String nodeId);
@@ -78,7 +92,9 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     @Modifying
     @Transactional
     @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus")
-    int resetStatus(DetailStatus oldStatus, DetailStatus newStatus);
+    int resetStatus(
+            @Param("oldStatus") DetailStatus oldStatus,
+            @Param("newStatus") DetailStatus newStatus);
 
     /**
      * 更新转码失败行数
@@ -91,5 +107,20 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     @Query("UPDATE QianyiDetail d SET d.transcodeErrorCount = :count WHERE d.id = :id")
     void updateErrorCount(Long id, Long count);
+
+    /**
+     * 调度器专用
+     * @param id
+     * @param oldStatus
+     * @param newStatus
+     * @return
+     */
+    @Modifying
+    @Transactional // <--- 【核心修复】加上这个，确保该方法自带事务运行
+    @Query("UPDATE QianyiDetail d SET d.status = :newStatus, d.updateTime = CURRENT_TIMESTAMP WHERE d.id = :id AND d.status = :oldStatus")
+    int updateStatus(
+            @Param("id") Long id,
+            @Param("oldStatus") DetailStatus oldStatus,
+            @Param("newStatus") DetailStatus newStatus);
 
 }

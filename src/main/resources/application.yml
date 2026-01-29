@@ -18,7 +18,7 @@ spring:
 
   # 数据库配置 (存放 qianyi_main, qianyi_detail 的元数据库)
   datasource:
-    url: jdbc:mysql://localtestdb:3306/test1?useSSL=false&useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&allowMultiQueries=true&tinyInt1isBit=false&yearIsDateType=false&allowPublicKeyRetrieval=true&connectTimeout=360000&socketTimeout=3600000&failOverReadOnly=false&failOverReadOnly=false&autoReconnect=true
+    url: jdbc:mysql://localtestdb:3316/test1?useSSL=false&useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&allowMultiQueries=true&tinyInt1isBit=false&yearIsDateType=false&allowPublicKeyRetrieval=true&connectTimeout=360000&socketTimeout=3600000&failOverReadOnly=false&failOverReadOnly=false&autoReconnect=true
     username: root
     password: 111111
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -105,14 +105,10 @@ app:
     pre-sql-list:
       - "SET unique_checks=0"
       - "SET foreign_key_checks=0"
-      - "SET sql_log_bin=0"
-      - "SET SESSION tx_isolation = 'READ-UNCOMMITTED'"
-    url-options: "?Unicode=true&useSSL=false&characterEncoding=utf8&allowLoadLocalInfile=true&rewriteBatchedStatements=true&useServerPrepStmts=false&cachePrepStmts=false&tinyInt1isBit=false&yearIsDateType=false&socketTimeout=3600000&connectTimeout=30000&autoReconnect=true&failOverReadOnly=false&useCompression=true&tdsqlLoadDataMode=fast&tdsqlSkipSlaveCheck=true&tdsqlBatchSize=1000000"
 
   verify:
     strategy: USE_SOURCE_FILE
     max-diff-count: 1000
-    #url-options: "?Unicode=true&useSSL=false&characterEncoding=utf8&allowLoadLocalInfile=true&rewriteBatchedStatements=true&useServerPrepStmts=false&cachePrepStmts=false&tinyInt1isBit=false&yearIsDateType=false&socketTimeout=3600000&connectTimeout=30000&autoReconnect=true&failOverReadOnly=false&useCompression=true&tdsqlLoadDataMode=fast&tdsqlSkipSlaveCheck=true&tdsqlBatchSize=1000000"
     #fetch-size: 100
 
 logging:

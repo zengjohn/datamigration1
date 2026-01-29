@@ -5,6 +5,7 @@ import com.example.moveprog.enums.CsvSplitStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +30,16 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
 
     // --- 【新增】给 Dispatcher 用的方法 ---
     // 抢占装载/验证任务
-    List<CsvSplit> findTop20ByStatusAndNodeId(CsvSplitStatus status, String nodeId);
+    @Query(value = """
+        SELECT * FROM csv_split 
+        WHERE status = :status 
+        AND node_id = :nodeId  -- 如果您用了节点绑定，加上这个更安全；没用则去掉
+        LIMIT 20 
+        FOR UPDATE SKIP LOCKED 
+        """, nativeQuery = true)
+    List<CsvSplit> findAndLockTop20ByStatusAndNodeId(
+            @Param("status") String status,
+            @Param("nodeId") String nodeId);
 
     // 僵尸任务检测 (也只检测本机卡住的任务，别去管别的机器)
     List<CsvSplit> findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus status, String nodeId, LocalDateTime time);
@@ -55,8 +65,22 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
     @Modifying
     @Transactional
     @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.status = :oldStatus")
-    int resetStatus(CsvSplitStatus oldStatus, CsvSplitStatus newStatus);
+    int resetStatus(
+            @Param("oldStatus") CsvSplitStatus oldStatus,
+            @Param("newStatus") CsvSplitStatus newStatus);
 
     List<CsvSplit> findByStatusAndUpdateTimeBefore(CsvSplitStatus status, LocalDateTime updateTime);
+
+    /**
+     * 【新增】调度器专用：极速更新状态
+     * 只有当当前状态符合预期时才更新 (CAS 乐观锁思想，双重保险)
+     */
+    @Modifying
+    @Query("UPDATE CsvSplit s SET s.status = :newStatus, s.updateTime = CURRENT_TIMESTAMP WHERE s.id = :id AND s.status = :oldStatus")
+    @Transactional // <--- 【核心修复】加上这个，确保该方法自带事务运行
+    int updateStatus(
+            @Param("id") Long id,
+            @Param("oldStatus") CsvSplitStatus oldStatus,
+            @Param("newStatus") CsvSplitStatus newStatus);
 
 }

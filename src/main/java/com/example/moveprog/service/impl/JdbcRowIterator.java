@@ -19,10 +19,10 @@ public class JdbcRowIterator implements CloseableRowIterator {
     private final int colCount;
     private boolean hasNext;
 
-    public JdbcRowIterator(TargetDatabaseConnectionManager targetDatabaseConnectionManager, Long detailId, String sql, int fetchSize) throws SQLException {
+    public JdbcRowIterator(TargetDatabaseConnectionManager targetDatabaseConnectionManager, Long jobId, String sql, int fetchSize) throws SQLException {
         this.sql = sql;
 
-        this.conn = targetDatabaseConnectionManager.getConnection(detailId, false);
+        this.conn = targetDatabaseConnectionManager.getConnection(jobId, true);
         this.ps = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
         if (fetchSize < 0) {
             // 【关键】必须设置为 Integer.MIN_VALUE 才能开启 MySQL 的流式读取

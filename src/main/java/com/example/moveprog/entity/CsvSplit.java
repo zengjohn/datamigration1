@@ -42,7 +42,7 @@ public class CsvSplit extends BaseNodeEntity {
      * 切分后的 UTF8 文件
      * 注意这里保存的是全路径名,  例如 /outdir/10_1.csv
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String splitFilePath;
 
     /**

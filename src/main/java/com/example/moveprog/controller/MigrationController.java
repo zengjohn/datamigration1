@@ -7,6 +7,7 @@ import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.*;
+import com.example.moveprog.service.ClusterBridgeService;
 import com.example.moveprog.service.JobControlManager;
 import com.example.moveprog.service.StateManager;
 import com.example.moveprog.util.MigrationOutputDirectorUtil;
@@ -36,6 +37,7 @@ public class MigrationController {
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
     private final StateManager stateManager;
+    private final ClusterBridgeService bridgeService; // 注入通用服务
 
     // 假设你有一个内存管理器控制停止信号
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
@@ -73,7 +75,6 @@ public class MigrationController {
         job.setStatus(JobStatus.ACTIVE);
 
         // 保存
-        job.setNodeId(config.getCurrentNodeIp());
         jobRepo.save(job);
 
         // 这里通常会触发一次 Scanner，让后台立即去扫描该目录
@@ -113,21 +114,24 @@ public class MigrationController {
     @PostMapping("/batch/{id}/close")
     public ResponseEntity<?> closeBatch(@PathVariable Long id) {
         Qianyi batch = qianyiRepo.findById(id).orElseThrow(() -> new RuntimeException("batch " + id + " 记录不存在"));
+        String targetIp = batch.getNodeId();
 
-        // 1. 检查是否所有 Detail 都已结束
-        long unfinishedCount = detailRepo.countByQianyiIdAndStatusNot(id, DetailStatus.FINISHED);
-        long errorCount = detailRepo.countByQianyiIdAndStatusNot(id, DetailStatus.FINISHED_WITH_ERROR); // 假设你有这个状态
+        return bridgeService.runOrProxy(targetIp, () -> {
+            // 1. 检查是否所有 Detail 都已结束
+            long unfinishedCount = detailRepo.countByQianyiIdAndStatusNot(id, DetailStatus.FINISHED);
+            long errorCount = detailRepo.countByQianyiIdAndStatusNot(id, DetailStatus.FINISHED_WITH_ERROR); // 假设你有这个状态
 
-        if (unfinishedCount > 0) {
-            return ResponseEntity.badRequest().body("还有 " + unfinishedCount + " 个文件未处理完，无法结单");
-        }
+            if (unfinishedCount > 0) {
+                return ResponseEntity.badRequest().body("还有 " + unfinishedCount + " 个文件未处理完，无法结单");
+            }
 
-        // 2. 修改状态
-        batch.setStatus(BatchStatus.FINISHED); // 或 CLOSED
-        batch.setUpdateTime(LocalDateTime.now());
-        qianyiRepo.save(batch);
+            // 2. 修改状态
+            batch.setStatus(BatchStatus.FINISHED); // 或 CLOSED
+            batch.setUpdateTime(LocalDateTime.now());
+            qianyiRepo.save(batch);
 
-        return ResponseEntity.ok("批次已结单" + (errorCount > 0 ? " (注意：包含失败任务)" : ""));
+            return ResponseEntity.ok("批次已结单" + (errorCount > 0 ? " (注意：包含失败任务)" : ""));
+        });
     }
 
     /**
@@ -141,14 +145,17 @@ public class MigrationController {
             return ResponseEntity.badRequest().body("只有解析失败(FAIL_PARSE)的任务才能重试");
         }
 
-        // 1. 删切片
-        splitRepo.deleteByQianyiId(id);
-        // 2. 删明细
-        detailRepo.deleteByQianyiId(id);
-        // 3. 删批次主记录
-        qianyiRepo.deleteById(id);
+        String targetIp = qianyi.getNodeId();
+        return bridgeService.runOrProxy(targetIp, () -> {
+            // 1. 删切片
+            splitRepo.deleteByQianyiId(id);
+            // 2. 删明细
+            detailRepo.deleteByQianyiId(id);
+            // 3. 删批次主记录
+            qianyiRepo.deleteById(id);
 
-        return ResponseEntity.ok("重试指令已下发（记录已清除，等待下一次扫描）");
+            return ResponseEntity.ok("重试指令已下发（记录已清除，等待下一次扫描）");
+        });
     }
 
     // Level 1.5: 批次管理 (OK文件) - 【新增】
@@ -186,44 +193,51 @@ public class MigrationController {
      */
     @GetMapping("/detail/{id}/bad-content")
     public ResponseEntity<?> getBadContent(@PathVariable Long id) {
-        try {
-            // 1. 推算 .bad 文件路径
-            // 假设规则是：在配置的 error 目录下，文件名与源文件相同，后缀加 .bad
-            // 或者您在 TranscodeService 里生成的路径规则
-            QianyiDetail qianyiDetail = detailRepo.findById(id).orElse(null);
-            if (qianyiDetail == null) {
-                return ResponseEntity.badRequest().body("明细 " + id + "不存在");
-            }
-            MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElse(null);
-            if (migrationJob == null) {
-                return ResponseEntity.badRequest().body("job " + qianyiDetail.getJobId() + "不存在");
-            }
 
-            String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
-            Path badFileName = Paths.get(errorDirectory, id + "_error.csv");
-            if (!badFileName.toFile().exists()) {
-                return ResponseEntity.ok("暂无失败记录文件 (或文件已被清理)");
+        QianyiDetail detail = detailRepo.findById(id).orElseThrow(() -> new RuntimeException("明细 " + id + "不存在"));
+        String targetIp = detail.getNodeId();
+
+        // 一行代码搞定：如果在本地就读文件，如果在远端就转发
+        return bridgeService.runOrProxy(targetIp, () -> {
+            try {
+                // 1. 推算 .bad 文件路径
+                // 假设规则是：在配置的 error 目录下，文件名与源文件相同，后缀加 .bad
+                // 或者您在 TranscodeService 里生成的路径规则
+                QianyiDetail qianyiDetail = detailRepo.findById(id).orElse(null);
+                if (qianyiDetail == null) {
+                    return ResponseEntity.badRequest().body("明细 " + id + "不存在");
+                }
+                MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElse(null);
+                if (migrationJob == null) {
+                    return ResponseEntity.badRequest().body("job " + qianyiDetail.getJobId() + "不存在");
+                }
+
+                String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
+                Path badFileName = Paths.get(errorDirectory, id + "_error.csv");
+                if (!badFileName.toFile().exists()) {
+                    return ResponseEntity.ok("暂无失败记录文件 (或文件已被清理)");
+                }
+
+                // 2. 读取前 100 行
+                List<String> lines = Files.readAllLines(badFileName);
+                StringBuilder sb = new StringBuilder();
+                sb.append("--- 失败行预览 (Top 100) ---\n");
+                sb.append("文件路径: ").append(badFileName).append("\n\n");
+
+                int limit = Math.min(lines.size(), 100);
+                for (int i = 0; i < limit; i++) {
+                    sb.append(lines.get(i)).append("\n");
+                }
+                if (lines.size() > limit) {
+                    sb.append("\n... (剩余 ").append(lines.size() - limit).append(" 行未显示) ...");
+                }
+
+                return ResponseEntity.ok(sb.toString());
+
+            } catch (Exception e) {
+                return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
             }
-
-            // 2. 读取前 100 行
-            List<String> lines = Files.readAllLines(badFileName);
-            StringBuilder sb = new StringBuilder();
-            sb.append("--- 失败行预览 (Top 100) ---\n");
-            sb.append("文件路径: ").append(badFileName).append("\n\n");
-
-            int limit = Math.min(lines.size(), 100);
-            for (int i = 0; i < limit; i++) {
-                sb.append(lines.get(i)).append("\n");
-            }
-            if (lines.size() > limit) {
-                sb.append("\n... (剩余 ").append(lines.size() - limit).append(" 行未显示) ...");
-            }
-
-            return ResponseEntity.ok(sb.toString());
-
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
-        }
+        });
     }
 
     // ===========================
@@ -243,14 +257,20 @@ public class MigrationController {
      */
     @PostMapping("/split/{id}/retry")
     public ResponseEntity<?> retrySplit(@PathVariable Long id) {
-        try {
-            // 调用 StateManager 将状态从 FAIL_X 重置为 WAIT_X
-            stateManager.resetSplitForRetry(id);
-            return ResponseEntity.ok("重试指令已下发，等待调度器执行");
-        } catch (Exception e) {
-            log.error("重试失败", e);
-            return ResponseEntity.badRequest().body("重试失败: " + e.getMessage());
-        }
+        CsvSplit split = splitRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("切片(id=" + id + ")不存在"));
+
+        String targetIp = split.getNodeId();
+        return bridgeService.runOrProxy(targetIp, () -> {
+            try {
+                // 调用 StateManager 将状态从 FAIL_X 重置为 WAIT_X
+                stateManager.resetSplitForRetry(id);
+                return ResponseEntity.ok("重试指令已下发，等待调度器执行");
+            } catch (Exception e) {
+                log.error("重试失败", e);
+                return ResponseEntity.badRequest().body("重试失败: " + e.getMessage());
+            }
+        });
     }
 
     /**
@@ -266,36 +286,40 @@ public class MigrationController {
         CsvSplit split = splitRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("切片(id=" + id + ")不存在"));
 
-        // 1. 安全检查：只有以下状态允许重验
-        // PASS (已通过), FAIL_VERIFY (校验失败), FINISHED (已完成)
-        // 绝对不能重置正在 LOADING 或 VERIFYING 的任务
-        if (split.getStatus() == CsvSplitStatus.LOADING ||
-                split.getStatus() == CsvSplitStatus.VERIFYING) {
-            return ResponseEntity.badRequest().body("当前状态正在运行中，无法强制重验");
-        }
+        String targetIp = split.getNodeId();
+        return bridgeService.runOrProxy(targetIp, () -> {
+            // 1. 安全检查：只有以下状态允许重验
+            // PASS (已通过), FAIL_VERIFY (校验失败), FINISHED (已完成)
+            // 绝对不能重置正在 LOADING 或 VERIFYING 的任务
+            if (split.getStatus() == CsvSplitStatus.LOADING ||
+                    split.getStatus() == CsvSplitStatus.VERIFYING) {
+                return ResponseEntity.badRequest().body("当前状态正在运行中，无法强制重验");
+            }
 
-        Long qianyiId = split.getQianyiId();
-        Qianyi qianyiById = qianyiRepo.findById(qianyiId)
-                .orElseThrow(() -> new RuntimeException("批次(id=" + qianyiId + ")不存在"));
-        if (BatchStatus.FINISHED.equals(qianyiById.getStatus())) {
-            return ResponseEntity.badRequest().body("当前批次状态已经关单，无法强制重验");
-        }
+            Long qianyiId = split.getQianyiId();
+            Qianyi qianyiById = qianyiRepo.findById(qianyiId)
+                    .orElseThrow(() -> new RuntimeException("批次(id=" + qianyiId + ")不存在"));
+            if (BatchStatus.FINISHED.equals(qianyiById.getStatus())) {
+                return ResponseEntity.badRequest().body("当前批次状态已经关单，无法强制重验");
+            }
 
-        // 2. 执行重置
-        // 将状态改回 WAIT_VERIFY，清空错误信息，调度器会自动捡起它
-        split.setStatus(CsvSplitStatus.WAIT_VERIFY);
-        split.setErrorMsg(null); // 清空旧的报错/差异信息
-        splitRepo.save(split);
+            // 2. 执行重置
+            // 将状态改回 WAIT_VERIFY，清空错误信息，调度器会自动捡起它
+            split.setStatus(CsvSplitStatus.WAIT_VERIFY);
+            split.setErrorMsg(null); // 清空旧的报错/差异信息
+            splitRepo.save(split);
 
-        // 3. 物理清理 (必须要做)
-        // 避免“新验证通过了，但旧的错误文件还在”的尴尬情况
-        MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
-        if (migrationJob == null) {
-            return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
-        }
-        deleteDiffFile(migrationJob.getOutDirectory(), split);
+            // 3. 物理清理 (必须要做)
+            // 避免“新验证通过了，但旧的错误文件还在”的尴尬情况
+            MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
+            if (migrationJob == null) {
+                return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
+            }
+            deleteDiffFile(migrationJob.getOutDirectory(), split);
 
-        return ResponseEntity.ok("已加入重验队列");
+            return ResponseEntity.ok("已加入重验队列");
+        });
+
     }
 
     private void deleteDiffFile(String outDirectory, CsvSplit split) {
@@ -314,37 +338,41 @@ public class MigrationController {
      */
     @GetMapping("/split/{id}/diff-content")
     public ResponseEntity<?> getDiffContent(@PathVariable Long id) {
-        try {
-            // 构造差异文件路径 (规则需与 VerifyService 一致)
-            CsvSplit split = splitRepo.findById(id).orElseThrow();
-            if (null == split) {
-                return ResponseEntity.badRequest().body("切片(id=" + id + ")不存在");
-            }
-            MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
-            if (migrationJob == null) {
-                return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
-            }
-            String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory());
-            Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId()));
-            if (!Files.exists(verifyResultFile)) {
-                return ResponseEntity.ok("暂无差异文件 (可能校验通过或文件已被清理)");
-            }
-
-            // 读取前 100 行 (防止文件过大撑爆浏览器)
-            List<String> lines = Files.readAllLines(verifyResultFile);
-            StringBuilder sb = new StringBuilder();
-            int limit = Math.min(lines.size(), 200);
-            for(int i=0; i<limit; i++) {
-                sb.append(lines.get(i)).append("\n");
-            }
-            if (lines.size() > limit) {
-                sb.append("\n... (更多内容请在服务器查看) ...");
-            }
-
-            return ResponseEntity.ok(sb.toString());
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
+        CsvSplit split = splitRepo.findById(id).orElseThrow();
+        if (null == split) {
+            return ResponseEntity.badRequest().body("切片(id=" + id + ")不存在");
         }
+
+        String targetIp = split.getNodeId();
+        return bridgeService.runOrProxy(targetIp, () -> {
+            try {
+                // 构造差异文件路径 (规则需与 VerifyService 一致)
+                MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
+                if (migrationJob == null) {
+                    return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
+                }
+                String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory());
+                Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId()));
+                if (!Files.exists(verifyResultFile)) {
+                    return ResponseEntity.ok("暂无差异文件 (可能校验通过或文件已被清理)");
+                }
+
+                // 读取前 100 行 (防止文件过大撑爆浏览器)
+                List<String> lines = Files.readAllLines(verifyResultFile);
+                StringBuilder sb = new StringBuilder();
+                int limit = Math.min(lines.size(), 200);
+                for(int i=0; i<limit; i++) {
+                    sb.append(lines.get(i)).append("\n");
+                }
+                if (lines.size() > limit) {
+                    sb.append("\n... (更多内容请在服务器查看) ...");
+                }
+
+                return ResponseEntity.ok(sb.toString());
+            } catch (Exception e) {
+                return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
+            }
+        });
     }
 
 }

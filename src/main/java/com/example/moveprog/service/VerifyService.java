@@ -19,10 +19,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.sql.Connection;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -47,28 +43,29 @@ public class VerifyService {
     private final AppProperties config;
 
     public void execute(Long splitId) {
-        // 1. 抢占任务
-        if (!stateManager.switchSplitStatus(splitId, CsvSplitStatus.VERIFYING, null)) return;
+        CsvSplit csvSplit = splitRepo.findById(splitId).orElse(null);
+        if (null == csvSplit || csvSplit.getStatus() != CsvSplitStatus.VERIFYING) {
+            return;
+        }
 
-        CsvSplit split = splitRepo.findById(splitId).orElseThrow();
-        MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElseThrow();
+        MigrationJob migrationJob = jobRepo.findById(csvSplit.getJobId()).orElseThrow();
 
         // 2. 准备迭代器
-        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(migrationJob.getOutDirectory(), split);
-             JdbcRowIterator dbIter = createDbIterator(split);
-             CloseableRowIterator<String> fileIter = createFileIterator(split)) {
+        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(migrationJob.getOutDirectory(), csvSplit);
+             JdbcRowIterator dbIter = createDbIterator(csvSplit);
+             CloseableRowIterator<String> fileIter = createFileIterator(csvSplit)) {
 
             log.info("开始校验切片: {}", splitId);
 
             // 3. 【核心调用】执行比对，并获取差异数
-            long diffCount = coreComparator.compareStreams(split.getJobId(), fileIter, dbIter, diffWriter);
+            long diffCount = coreComparator.compareStreams(csvSplit.getJobId(), fileIter, dbIter, diffWriter);
 
             // 4. 【核心判断】根据差异数决定最终状态
             if (diffCount == 0) {
                 log.info("校验通过: 切片 ID={}", splitId);
                 // 校验通过，删除可能的空差异文件（如果有的话）
                 if (config.getVerify().isDeleteSplitVerifyPass()) {
-                    deleteSplitFile(split);
+                    deleteSplitFile(csvSplit);
                 }
                 deleteEmptyVerifyResultFile(migrationJob.getId(), splitId);
                 stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验通过");
@@ -81,14 +78,13 @@ public class VerifyService {
             }
 
             // 5. 【关键】刷新父级 Detail 状态
-            QianyiDetail qianyiDetail = detailRepo.findById(split.getDetailId()).orElseThrow();
+            QianyiDetail qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
             stateManager.refreshDetailStatus(qianyiDetail.getId()); // 需在Manager加个简单查询方法，或这里先查再传
 
         } catch (Exception e) {
             log.error("校验过程发生系统异常: {}", e.getMessage(), e);
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.FAIL_VERIFY, "系统异常: " + e.getMessage());
             // 失败也要刷新父级
-            CsvSplit csvSplit = splitRepo.findById(splitId).orElseThrow();
             stateManager.refreshDetailStatus(csvSplit.getDetailId());
             // 失败时不删除文件！方便运维人员去磁盘上查看这个文件到底哪里有问题
         }
@@ -110,7 +106,7 @@ public class VerifyService {
 
         // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
         String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = " + split.getId() + " ORDER BY source_row_no";
-        JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getDetailId(), sql, config.getVerify().getFetchSize());
+        JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getJobId(), sql, config.getVerify().getFetchSize());
         return dbIter;
     }
 

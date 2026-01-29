@@ -84,7 +84,10 @@ public class DirectoryMonitor {
 
         // 初始化对象（先不保存，等解析成功再保存，或者捕获异常保存失败状态）
         Qianyi qianyi = new Qianyi();
-        qianyi.setNodeId(config.getCurrentNodeIp());
+        // 【关键】自动绑定当前机器的 IP
+        // 因为 DirectoryMonitor 只能扫到本机硬盘的文件，所以这个任务一定是本机的
+        String myIp = config.getCurrentNodeIp();
+        qianyi.setNodeId(myIp);
         qianyi.setJobId(job.getId());
         qianyi.setOkFilePath(okPath);
         // 默认表名：如果 JSON 解析挂了，用文件名兜底
@@ -159,7 +162,8 @@ public class DirectoryMonitor {
             // 5. 保存明细记录
             for (String absCsvPath : finalCsvPaths) {
                 QianyiDetail detail = new QianyiDetail();
-                detail.setNodeId(config.getCurrentNodeIp());
+                // 【关键】明细也绑定本机 IP
+                detail.setNodeId(myIp);
                 detail.setJobId(qianyi.getJobId());
                 detail.setQianyiId(qianyi.getId());
                 detail.setTableName(realTableName);

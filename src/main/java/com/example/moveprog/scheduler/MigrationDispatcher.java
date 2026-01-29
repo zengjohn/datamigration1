@@ -19,6 +19,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -89,6 +90,11 @@ public class MigrationDispatcher {
     @Scheduled(fixedDelay = 5000)
     public void schedule() {
         String myIp = config.getCurrentNodeIp(); // 从配置获取本机 IP
+        // 防御性检查：如果没配，抛异常或者打印严重警告
+        if (myIp == null || myIp.isEmpty()) {
+            log.error("严重错误：未配置 app.current-node-ip，调度器无法工作！");
+            return;
+        }
 
         dispatchTranscode(myIp);
         dispatchLoad(myIp);
@@ -124,52 +130,82 @@ public class MigrationDispatcher {
 
     }
 
-    // --- 阶段 1: 调度转码 (针对 Detail) ---
-    private void dispatchTranscode(String myIp) {
-        // 1. 查出所有待转码的文件
-        // SELECT * FROM t_detail WHERE status = 'NEW' LIMIT 5
-        List<QianyiDetail> details = detailRepo.findTop5ByStatusAndNodeId(DetailStatus.NEW, myIp);
+    /**
+     * --- 阶段 1: 调度转码 (针对 Detail) ---
+     * @param myIp
+     */
+    @Transactional // 必须开启事务
+    public void dispatchTranscode(String myIp) {
+        // 1. 使用 SKIP LOCKED 抢占 5 个任务
+        List<QianyiDetail> details = detailRepo.findAndLockTop5ByStatusAndNodeId(DetailStatus.NEW.toString(), myIp);
+        if (details.isEmpty()) return;
+
         for (QianyiDetail d : details) {
-            // 这里简单起见没加 Set 防抖，因为 Transcode 比较少，如有需要也可加
-            transcodeExecutor.execute(() -> transcodeService.execute(d.getId()));
+            // 2. 立即在事务内标记为“处理中”，防止事务提交后锁释放被别人抢走
+            // (虽然用了 SKIP LOCKED 别人本身就查不到，但为了逻辑严谨，先改状态)
+            int rows = detailRepo.updateStatus(d.getId(), DetailStatus.NEW, DetailStatus.TRANSCODING);
+
+            if (rows > 0) {
+                // 3. 异步提交给线程池处理实际业务
+                // 注意：这里不要直接在这里跑耗时逻辑，否则数据库连接会一直被事务占用
+                // 应该把 task.getId() 丢给线程池
+                transcodeExecutor.execute(() -> {
+                    transcodeService.execute(d.getId());
+                });
+            }
         }
     }
 
-    // --- 阶段 2: 调度装载 (针对 Split) ---
-    // 【变化点】这里不再查 Detail，而是直接查 Split 表
-    private void dispatchLoad(String myIp) {
-        // SELECT * FROM t_split WHERE status = 'WAIT_LOAD' LIMIT 20
+    /**
+     * --- 阶段 2: 调度装载 (针对 Split) ---
+     *  【变化点】这里不再查 Detail，而是直接查 Split 表
+     * @param myIp
+     */
+    @Transactional // 必须开启事务
+    public void dispatchLoad(String myIp) {
         // 注意：这里可以一次取更多，因为装载通常比转码快
-        List<CsvSplit> splits = splitRepo.findTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_LOAD, myIp);
+        List<CsvSplit> splits = splitRepo.findAndLockTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_LOAD.toString(), myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue; // 防抖
-            inFlightSplits.add(s.getId());
 
-            loadExecutor.execute(() -> {
-                try {
-                    loadService.execute(s.getId());
-                } finally {
-                    inFlightSplits.remove(s.getId());
-                }
-            });
+            // 2. 【核心修改】直接调用 Repo 更新，不走 StateManager
+            // 这里的逻辑极快，纯 DB 操作，完全在一个事务内
+            int rows = splitRepo.updateStatus(s.getId(), CsvSplitStatus.WAIT_LOAD, CsvSplitStatus.LOADING);
+            if (rows > 0) {
+                // 更新成功，内存加锁
+                inFlightSplits.add(s.getId());
+                // 异步提交
+                loadExecutor.execute(() -> {
+                    try {
+                        loadService.execute(s.getId());
+                    } finally {
+                        inFlightSplits.remove(s.getId());
+                    }
+                });
+            }
+
         }
     }
 
     // --- 阶段 3: 调度校验 (针对 Split) ---
-    private void dispatchVerify(String myIp) {
+    @Transactional // 必须开启事务
+    public void dispatchVerify(String myIp) {
         // SELECT * FROM t_split WHERE status = 'WAIT_VERIFY' LIMIT 20
-        List<CsvSplit> splits = splitRepo.findTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_VERIFY, myIp);
+        List<CsvSplit> splits = splitRepo.findAndLockTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_VERIFY.toString(), myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue;
-            inFlightSplits.add(s.getId());
 
-            verifyExecutor.execute(() -> {
-                try {
-                    verifyService.execute(s.getId());
-                } finally {
-                    inFlightSplits.remove(s.getId());
-                }
-            });
+            int rows = splitRepo.updateStatus(s.getId(), CsvSplitStatus.WAIT_VERIFY, CsvSplitStatus.VERIFYING);
+            if (rows > 0) {
+                inFlightSplits.add(s.getId());
+                verifyExecutor.execute(() -> {
+                    try {
+                        verifyService.execute(s.getId());
+                    } finally {
+                        inFlightSplits.remove(s.getId());
+                    }
+                });
+            }
         }
     }
 }

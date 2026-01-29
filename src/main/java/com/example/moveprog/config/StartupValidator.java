@@ -8,14 +8,17 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.sql.Connection;
+import java.util.Enumeration;
 
 @Component
 @Order(1) // 保证它最先执行 (优先级高)
 @Slf4j
 @RequiredArgsConstructor
 public class StartupValidator implements ApplicationRunner {
-
+    private final AppProperties config;
     private final DataSource dataSource;
 
     @Override
@@ -23,6 +26,10 @@ public class StartupValidator implements ApplicationRunner {
         log.info(">>> 开始应用启动自检...");
 
         try {
+            if (!isLocalIP(config.getCurrentNodeIp())) {
+                throw new RuntimeException("currentNodeIp 必须配置本机地址");
+            }
+
             // 校验数据库连接
             validateDatabase();
 
@@ -52,4 +59,32 @@ public class StartupValidator implements ApplicationRunner {
             throw new RuntimeException("无法连接到数据库，请检查 URL/User/Password 配置。(" + e.getMessage() + ")");
         }
     }
+
+    public static boolean isLocalIP(String ip) {
+        try {
+            InetAddress addr = InetAddress.getByName(ip);
+            if (addr.isLoopbackAddress()) return false;
+
+            Enumeration<NetworkInterface> networkInterfaces = NetworkInterface.getNetworkInterfaces();
+            while (networkInterfaces.hasMoreElements()) {
+                NetworkInterface iface = networkInterfaces.nextElement();
+                if (!iface.isUp() || iface.getDisplayName().toLowerCase().contains("virtual")) {
+                    continue;
+                }
+
+                Enumeration<InetAddress> inetAddresses = iface.getInetAddresses();
+                while (inetAddresses.hasMoreElements()) {
+                    InetAddress inetAddress = inetAddresses.nextElement();
+                    if (addr.equals(inetAddress)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+        }
+        return false;
+    }
+
+
 }
