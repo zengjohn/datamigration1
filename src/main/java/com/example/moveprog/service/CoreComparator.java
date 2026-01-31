@@ -2,19 +2,21 @@ package com.example.moveprog.service;
 
 import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.service.impl.JdbcRowIterator;
+import com.example.moveprog.util.DBUtils;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.sql.SQLException;
+import java.sql.Time;
 import java.sql.Timestamp;
-import java.sql.Types;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
+import java.util.Locale;
 
 /**
  * 核心比对器 - 修复版
@@ -116,7 +118,7 @@ public class CoreComparator {
     /**
      * 快速比对行（不生成垃圾对象）
      */
-    private boolean isRowEqual(Object[] dbRow, String[] fileRow, int[] colSqlTypes) {
+    private static boolean isRowEqual(Object[] dbRow, String[] fileRow, int[] colSqlTypes) {
         // 注意：dbRow 和 fileRow 长度可能包含 row_no，比对时要排除最后一列
         int len = Math.min(dbRow.length, fileRow.length) - 1;
 
@@ -131,139 +133,140 @@ public class CoreComparator {
         return true;
     }
 
-    private boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
-        // 1. 处理 NULL
-        if (dbVal == null) {
-            return fileStr == null || fileStr.trim().isEmpty();
-        }
-        if (fileStr == null || fileStr.trim().isEmpty()) {
-            if (dbVal instanceof String) {
-                return ((String) dbVal).trim().isEmpty();
-            }
-            return false;
-        }
+    private static boolean isCellEqual(Object dbVal, String fileStr, int sqlType) {
+        // 1. 判空逻辑
+        boolean dbNull = (dbVal == null);
+        boolean fileNull = (fileStr == null || fileStr.trim().isEmpty() || "null".equalsIgnoreCase(fileStr.trim()));
+        if (dbNull && fileNull) return true;
+        if (dbNull || fileNull) return false; // 一个有一个没有
 
         String csvVal = fileStr.trim();
 
-        switch (sqlType) {
-            // === 数值比较 (最关键) ===
-            case Types.DECIMAL:
-            case Types.NUMERIC:
-                BigDecimal dbDec = (BigDecimal) dbVal;
-                try {
-                    BigDecimal fileDec = new BigDecimal(csvVal);
-                    return dbDec.compareTo(fileDec) == 0;
-                } catch (NumberFormatException e) {
-                    return false;
-                }
-
-            case Types.TINYINT:
-            case Types.SMALLINT:
-            case Types.INTEGER:
-            case Types.BIGINT:
-                // 数据库可能是 Integer 或 Long，统一转 String 或 Long 比较
-                try {
-                    long dbLong = ((Number) dbVal).longValue();
-                    long fileLong = Long.parseLong(csvVal);
-                    return dbLong == fileLong;
-                } catch (Exception e) {
-                    return false;
-                }
-
-                // === 时间比较 ===
-            case Types.DATE: {
-                return String.valueOf(dbVal).trim().equals(csvVal);
+        if (DBUtils.isNumber(sqlType) || DBUtils.isReal(sqlType)) {
+            try {
+                // 使用 BigDecimal 比较，忽略精度差异 (1.0 == 1.00)
+                return new BigDecimal(dbVal.toString()).compareTo(new BigDecimal(csvVal)) == 0;
+            } catch (Exception e) {
+                return false;
             }
+        }
 
-            case Types.TIMESTAMP: {
-                Timestamp dbTime;
-                if (dbVal instanceof LocalDateTime) {
-                    dbTime = Timestamp.valueOf((LocalDateTime) dbVal);
-                } else if (dbVal instanceof Timestamp) {
-                    dbTime = (Timestamp) dbVal;
-                } else {
-                    dbTime = parseTimestamp(dbVal.toString());
-                }
-                Timestamp fileTime = parseTimestamp(csvVal);
-                return dbTime.compareTo(fileTime) == 0;
+        if (DBUtils.isTimeType(sqlType)) {
+            return compareAsTime(dbVal, csvVal);
+        }
+
+        if (DBUtils.isDateType(sqlType) ||
+                DBUtils.isTimestamp(sqlType)) {
+            return compareAsTimestamp(dbVal, csvVal);
+        }
+
+        return String.valueOf(dbVal).trim().equals(csvVal);
+    }
+
+    private static boolean compareAsTime(Object dbVal, String csvVal) {
+        try {
+            Time dbTime = (Time)dbVal;
+            Time csvTime = parseCsvTime(csvVal);
+            return dbTime.compareTo(csvTime) == 0;
+        } catch (Exception e) {
+            if (log.isTraceEnabled()) {
+                log.trace("解析时间报错, 用字符串比较, dbVal: {}, csvVal: {}", dbVal, csvVal, e);
             }
-
-            // === 字符串 ===
-            default:
-                return String.valueOf(dbVal).trim().equals(csvVal);
+            return String.valueOf(dbVal).equals(csvVal);
         }
     }
 
     /**
-     * 单元格比对逻辑
+     * 将两边都转为 Timestamp 进行比对
      */
-    private boolean isCellEqual_other(Object dbVal, String fileStr, int sqlType) {
-        // 1. 预处理 CSV 值
-        String csvVal = (fileStr == null) ? "" : fileStr.trim();
-        boolean fileIsEmpty = csvVal.isEmpty() || "null".equalsIgnoreCase(csvVal);
+    private static boolean compareAsTimestamp(Object dbVal, String csvVal) {
+        try {
+            Timestamp t1 = toTimestamp(dbVal);
+            Timestamp t2 = parseCsvTimestamp(csvVal);
 
-        // 2. DB 为 NULL 的情况
-        if (dbVal == null) {
-            // DB=null, CSV="" 或 "null" -> 视为相等
-            return fileIsEmpty;
-        }
+            if (t1 == null || t2 == null) return false;
 
-        // 3. DB 不为 NULL，但 CSV 为空的情况
-        if (fileIsEmpty) {
-            // 特殊处理：如果 DB 是空字符串 ""，则相等
-            String dbStr = String.valueOf(dbVal).trim();
-            if (dbStr.isEmpty()) return true;
-
-            // 特殊处理数值：如果 CSV="" 而 DB=0 或 0.00，是否视为相等？
-            // 如果您希望严格比对，请删除下面这段 case；如果希望宽容，请保留
-            /*
-            if (isNumeric(sqlType)) {
-                 try {
-                     return new BigDecimal(dbStr).compareTo(BigDecimal.ZERO) == 0;
-                 } catch (Exception e) {}
-            }
-            */
-
-            // 默认情况：DB有值，CSV没值 -> 不相等
-            return false;
-        }
-
-        // 4. 双方都有值 -> 类型比对
-        String dbStr = String.valueOf(dbVal).trim();
-
-        switch (sqlType) {
-            case Types.NUMERIC:
-            case Types.DECIMAL:
-            case Types.DOUBLE:
-            case Types.FLOAT:
-            case Types.INTEGER:
-            case Types.BIGINT:
-                try {
-                    // 使用 BigDecimal 解决 0.00 vs 0 的问题
-                    return new BigDecimal(dbStr).compareTo(new BigDecimal(csvVal)) == 0;
-                } catch (Exception e) {
-                    return false;
-                }
-
-            case Types.TIMESTAMP:
-            case Types.DATE:
-                // 简单比对：截取前19位 (忽略毫秒差异，如果业务允许)
-                // 或者复用之前的 parseTimestamp 精确比对
-                if (dbStr.length() > 19) dbStr = dbStr.substring(0, 19);
-                if (csvVal.length() > 19) csvVal = csvVal.substring(0, 19);
-                return dbStr.equals(csvVal);
-
-            default:
-                // 字符串比对
-                return dbStr.equals(csvVal);
+            // 比较 (t1.compareTo(t2) == 0 表示相等)
+            // 如果不需要毫秒级精确，可以 t1.getTime()/1000 == t2.getTime()/1000
+            int ret = t1.compareTo(t2);
+            return ret == 0;
+        } catch (Exception e) {
+            // 如果解析挂了，回退到字符串比较，或者直接认为不相等
+            // log.warn("时间比对异常: DB={} vs CSV={}", dbVal, csvVal);
+            return String.valueOf(dbVal).equals(csvVal);
         }
     }
 
-    private String formatDiffDetail(Object[] dbRow, String[] fileRow, int[] types, String[] names, Long rowNo) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("差异行 @").append(rowNo).append(": ");
-        int len = Math.min(dbRow.length, fileRow.length) - 1;
+    /**
+     * 将 DB 对象转为 Timestamp
+     */
+    private static Timestamp toTimestamp(Object val) {
+        if (val instanceof java.sql.Timestamp) return (Timestamp) val;
+        if (val instanceof java.time.LocalDateTime) return Timestamp.valueOf((LocalDateTime) val);
+        if (val instanceof java.sql.Date) return new Timestamp(((java.sql.Date) val).getTime());
+        if (val instanceof java.util.Date) return new Timestamp(((java.util.Date) val).getTime());
+        // 尝试转换字符串
+        return parseCsvTimestamp(val.toString());
+    }
 
+    /**
+     * 解析 CSV 字符串为 Timestamp (支持多种格式)
+     */
+    private static Timestamp parseCsvTimestamp(String val) {
+        // 1. 尝试 JDBC 标准格式
+        try {
+            return Timestamp.valueOf(val);
+        } catch (Exception e) {
+            // ignore
+        }
+
+        // 2. 尝试自定义格式器
+        for (DateTimeFormatter fmt : DATE_PARSERS) {
+            try {
+                // 尝试解析为 LocalDateTime
+                LocalDateTime ldt = LocalDateTime.parse(val, fmt);
+                return Timestamp.valueOf(ldt);
+            } catch (Exception e) {
+                // 有些格式只有日期没有时间 (yyyy/M/d) -> 解析为 LocalDate 再转
+                try {
+                    java.time.LocalDate ld = java.time.LocalDate.parse(val, fmt);
+                    return Timestamp.valueOf(ld.atStartOfDay());
+                } catch (Exception ex) {
+                    // continue
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Time parseCsvTime(String val) {
+        val = StringUtils.replaceChars(val, "/", ":");
+        String[] splits = StringUtils.split(val, ":");
+
+        if (splits.length == 1) {
+            String hour = splits[0].trim();
+            if (hour.length() == 1) hour = "0"+hour;
+            return Time.valueOf(hour + ":00:00");
+        }
+
+        if (splits.length == 2) {
+            String hour = splits[0].trim();
+            if (hour.length() == 1) hour = "0"+hour;
+
+            String min = splits[1].trim();
+            if (hour.length() == 1) min = "0"+min;
+
+            return Time.valueOf(hour + ":" + min + ":00");
+        }
+
+        return Time.valueOf(val);
+    }
+
+    // --- 辅助方法 ---
+    private static String formatDiffDetail(Object[] dbRow, String[] fileRow, int[] types, String[] names, Long rowNo) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("差异 @").append(rowNo).append(": ");
+        int len = Math.min(dbRow.length, fileRow.length) - 1;
         for (int i = 0; i < len; i++) {
             if (!isCellEqual(dbRow[i], fileRow[i], types[i])) {
                 sb.append("[").append(names[i]).append("] ")
@@ -274,15 +277,13 @@ public class CoreComparator {
         return sb.toString();
     }
 
-    // 辅助：获取数组最后一个元素作为行号
     private Long getRowNo(Object row) {
-        // 如果某一边为 null，行号设为 MAX_VALUE 以便进入后续的判断分支
         if (row == null) return null;
         if (row instanceof Object[]) {
             Object[] arr = (Object[]) row;
             return Long.parseLong(String.valueOf(arr[arr.length - 1]));
         }
-        return null; // Should not happen for DB
+        return null;
     }
 
     private Long getRowNo(String[] row) {
@@ -290,66 +291,27 @@ public class CoreComparator {
         return Long.parseLong(row[row.length - 1]);
     }
 
-    private boolean isNumeric(int sqlType) {
-        return sqlType == Types.NUMERIC || sqlType == Types.DECIMAL ||
-                sqlType == Types.INTEGER || sqlType == Types.BIGINT ||
-                sqlType == Types.DOUBLE || sqlType == Types.FLOAT;
-    }
-
-    private static final DateTimeFormatter[] DATE_FORMATS = {
-            DateTimeFormatter.ofPattern("yyyy-MM-dd")
-    };
-
-    // 定义多种可能的时间格式，用于解析 CSV 字符串
-    // 这种带 [.SSSSSS] 的写法是关键，可选匹配微秒
-    private static final DateTimeFormatter[] DATETIME_FORMATS = {
+    // 定义支持的 CSV 时间格式 (包含您提到的斜杠格式)
+    private static final DateTimeFormatter[] DATE_PARSERS = {
+            // 兼容斜杠格式 (2024/1/15 14:30)
+            // 使用 DateTimeFormatterBuilder 来构建灵活的解析器
+            new DateTimeFormatterBuilder()
+                    .appendPattern("yyyy/M/d")
+                    .optionalStart().appendPattern(" H:m:s").optionalEnd()
+                    .optionalStart().appendPattern(" H:m").optionalEnd()
+                    .parseDefaulting(ChronoField.HOUR_OF_DAY, 0)
+                    .parseDefaulting(ChronoField.MINUTE_OF_HOUR, 0)
+                    .parseDefaulting(ChronoField.SECOND_OF_MINUTE, 0)
+                    .toFormatter(Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
+            // 标准格式
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"),
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSSSSS") // 兼容斜杠
+            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+
+            // 兼容点号或横杠的其他变体
+            DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm:ss")
     };
-
-    /**
-     * 【核心】高精度时间比对
-     * 解决：
-     * 1. DB: 2023-01-01 10:00:00.000000 vs CSV: 2023-01-01 10:00:00 (缺省)
-     * 2. DB: 2023-01-01 10:00:00.123456 vs CSV: 2023-01-01 10:00:00.123456
-     */
-    private boolean compareTimestamp(String v1, String v2) {
-        try {
-            Timestamp t1 = parseTimestamp(v1);
-            Timestamp t2 = parseTimestamp(v2);
-
-            // 使用 compareTo == 0 来比较，能够正确处理 nanos
-            return t1.compareTo(t2) == 0;
-
-        } catch (Exception e) {
-            // 如果解析失败，说明格式严重不符，直接返回 false
-            // 或者 log.warn("时间格式解析失败: {} vs {}", v1, v2);
-            return false;
-        }
-    }
-
-    private Timestamp parseTimestamp(String val) {
-        // 1. 尝试直接用 Timestamp.valueOf (格式必须是 yyyy-mm-dd hh:mm:ss[.f...])
-        try {
-            return Timestamp.valueOf(val);
-        } catch (IllegalArgumentException e) {
-            // 忽略，继续尝试
-        }
-
-        // 2. 尝试手动归一化 (补全微秒)
-        // 有时候 DB 返回 .0 而 CSV 没有，或者反之
-        // 最暴力的办法：都转成纳秒级对比，或者利用 DateTimeFormatter
-        for (DateTimeFormatter fmt : DATE_FORMATS) {
-            try {
-                // 如果是 LocalDateTime 转换
-                java.time.LocalDateTime ldt = java.time.LocalDateTime.parse(val, fmt);
-                return Timestamp.valueOf(ldt);
-            } catch (DateTimeParseException ignored) {}
-        }
-
-        throw new RuntimeException("Unparseable date: " + val);
-    }
 
 }

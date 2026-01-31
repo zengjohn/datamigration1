@@ -17,13 +17,13 @@ public interface QianyiRepository extends JpaRepository<Qianyi, Long> {
      * 检查 ok 文件是否已经处理过
      * 用途: DirectoryMonitor 防止重复生成任务
      */
-    boolean existsByOkFilePath(String okFilePath);
+    boolean existsByOkFilePathAndNodeId(String okFilePath, String nodeId);
 
     /**
      * 查询特定状态的批次
      * 用途: MigrationDispatcher 检查 "PROCESSING" 的批次是否已经全部完成
      */
-    List<Qianyi> findByStatus(BatchStatus status);
+    //List<Qianyi> findByStatus(BatchStatus status);
 
     List<Qianyi> findByJobId(Long jobId);
 

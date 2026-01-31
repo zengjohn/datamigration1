@@ -3,7 +3,6 @@ package com.example.moveprog.entity;
 import com.example.moveprog.enums.DetailStatus;
 import jakarta.persistence.*;
 import lombok.Data;
-import org.springframework.data.jpa.repository.Modifying;
 
 import java.time.LocalDateTime;
 
@@ -33,6 +32,12 @@ public class QianyiDetail extends BaseNodeEntity {
     private Long qianyiId;
 
     /**
+     * 冗余一下，方便查询
+     */
+    @Column(nullable = true, length = 255)
+    private String schemaName;
+
+    /**
      * 冗余一下表名，方便查询
      */
     @Column(nullable = false, length = 255)
@@ -59,6 +64,9 @@ public class QianyiDetail extends BaseNodeEntity {
     @Column(columnDefinition = "bigint default 0")
     private Long transcodeErrorCount = 0L; // 新增字段：转码失败行数
 
+    @Column(name = "update_time", insertable = false, updatable = false,
+            columnDefinition = "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+    @org.hibernate.annotations.Generated(org.hibernate.annotations.GenerationTime.ALWAYS)
     private LocalDateTime updateTime;
-    @PrePersist @PreUpdate void onUpdate() { updateTime = LocalDateTime.now(); }
+
 }

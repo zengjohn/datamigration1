@@ -5,7 +5,9 @@ import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
+import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.CsvSplitRepository;
+import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.service.LoadService;
 import com.example.moveprog.service.StateManager;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
 @EnableScheduling
@@ -33,6 +36,7 @@ import java.util.concurrent.Executor;
 @RequiredArgsConstructor
 public class MigrationDispatcher {
 
+    private final MigrationJobRepository jobRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
     
@@ -42,43 +46,40 @@ public class MigrationDispatcher {
     private final StateManager stateManager;
 
     // 注入 AppProperties 用于获取配置...
-    private final AppProperties config;
+    private final AppProperties appProperties;
 
     // 内存防抖 Set (防止重复提交到队列)
     private Set<Long> inFlightSplits = ConcurrentHashMap.newKeySet();
 
-    // --- 1. 线程池配置 (隔离) ---
+    // 1. 转码专用线程池
     @Bean("transcodeExecutor")
     public Executor transcodeExecutor() {
-        AppProperties.ThreadPool transcode = config.getMigrationThreadPool().getTranscode();
-        ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(transcode.getCorePoolSize() > 0 ? transcode.getCorePoolSize() : 2);
-        ex.setMaxPoolSize(transcode.getMaxPoolSize() > 0 ? transcode.getMaxPoolSize() : 4);
-        ex.setThreadNamePrefix("Task-Trans-");
-        ex.initialize();
-        return ex;
+        return buildExecutor(appProperties.getExecutor().getTranscode(), "Transcode-");
     }
 
+    // 2. 装载专用线程池
     @Bean("loadExecutor")
     public Executor loadExecutor() {
-        AppProperties.ThreadPool load = config.getMigrationThreadPool().getLoad();
-        ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(load.getCorePoolSize() > 0 ? load.getCorePoolSize() : 5);
-        ex.setMaxPoolSize(load.getMaxPoolSize() > 0 ? load.getMaxPoolSize() : 10);
-        ex.setThreadNamePrefix("Task-Load-");
-        ex.initialize();
-        return ex;
+        return buildExecutor(appProperties.getExecutor().getLoad(), "Load-");
     }
 
+    // 3. 验证专用线程池
     @Bean("verifyExecutor")
     public Executor verifyExecutor() {
-        AppProperties.ThreadPool verify = config.getMigrationThreadPool().getVerify();
-        ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
-        ex.setCorePoolSize(verify.getCorePoolSize() > 0 ? verify.getCorePoolSize() : 5);
-        ex.setMaxPoolSize(verify.getMaxPoolSize() > 0  ? verify.getMaxPoolSize() : 10);
-        ex.setThreadNamePrefix("Task-Verify-");
-        ex.initialize();
-        return ex;
+        return buildExecutor(appProperties.getExecutor().getVerify(), "Verify-");
+    }
+
+    // 通用构建方法
+    private ThreadPoolTaskExecutor buildExecutor(AppProperties.ExecutorConfig config, String prefix) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(config.getCoreSize());
+        executor.setMaxPoolSize(config.getMaxSize());
+        executor.setQueueCapacity(config.getQueueCapacity());
+        executor.setThreadNamePrefix(prefix);
+        // 拒绝策略：调用者运行 (防止队列满了丢任务，而是让调度线程自己跑，变相减缓调度速度)
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
     }
 
     @Autowired private Executor transcodeExecutor;
@@ -89,13 +90,21 @@ public class MigrationDispatcher {
     // --- 2. 调度逻辑 (每 5 秒轮询) ---
     @Scheduled(fixedDelay = 5000)
     public void schedule() {
-        String myIp = config.getCurrentNodeIp(); // 从配置获取本机 IP
+        // 如果当前没有任何一个作业处于 MIGRATING 状态，直接跳过
+        // 这是一个极快的 Count 查询，比 SKIP LOCKED 轻量得多
+        if (jobRepo.countByStatus(JobStatus.ACTIVE) == 0) {
+            log.trace("No jobs in active");
+            return;
+        }
+
+        String myIp = appProperties.getCurrentNodeIp(); // 从配置获取本机 IP
         // 防御性检查：如果没配，抛异常或者打印严重警告
         if (myIp == null || myIp.isEmpty()) {
             log.error("严重错误：未配置 app.current-node-ip，调度器无法工作！");
             return;
         }
 
+        // 只有当有活动作业时，才去执行繁重的任务抢占逻辑
         dispatchTranscode(myIp);
         dispatchLoad(myIp);
         dispatchVerify(myIp);
@@ -108,24 +117,18 @@ public class MigrationDispatcher {
      */
     @Scheduled(fixedDelay = 600000)
     public void rescueStuckTasks() {
-        String myIp = config.getCurrentNodeIp();
-
-        LocalDateTime timeThreshold = LocalDateTime.now().minusMinutes(30);
+        String myIp = appProperties.getCurrentNodeIp();
 
         // 1. 捞出处于 LOADING 状态 且 最后更新时间早于 30分钟前 的任务
-        List<CsvSplit> stuckLoadingSplits = splitRepo.findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus.LOADING, myIp, timeThreshold);
-        for (CsvSplit split : stuckLoadingSplits) {
-            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 LOADING 超过30分钟，强制重置。", myIp, split.getId());
-            // 强制重置状态
-            stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_LOAD, "系统自动重置Loading超时任务");
+        int count = splitRepo.resetZombieTasksDirectly(CsvSplitStatus.LOADING.toString(), CsvSplitStatus.WAIT_LOAD.toString(), myIp);
+        if (count > 0) {
+            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 LOADING 超过30分钟，强制重置。", myIp);
         }
 
         // 2. 捞出处于 VERIFYING 状态 且 最后更新时间早于 30分钟前 的任务
-        List<CsvSplit> stuckVerifyingSplits = splitRepo.findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus.LOADING, myIp, timeThreshold);
-        for (CsvSplit split : stuckVerifyingSplits) {
-            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 VERIFYING 超过30分钟，强制重置。", myIp, split.getId());
-            // 强制重置状态
-            stateManager.switchSplitStatus(split.getId(), CsvSplitStatus.WAIT_VERIFY, "系统自动重置Verifying超时任务");
+        count = splitRepo.resetZombieTasksDirectly(CsvSplitStatus.VERIFYING.toString(), CsvSplitStatus.WAIT_VERIFY.toString(), myIp);
+        if (count > 0) {
+            log.error("本机[{}]发现僵尸任务 Split[{}]，卡在 VERIFYING 超过30分钟，强制重置。", myIp);
         }
 
     }

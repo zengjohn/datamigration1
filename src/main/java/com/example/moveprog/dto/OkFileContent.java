@@ -8,6 +8,10 @@ public class OkFileContent {
      */
     public String ddl;
 
+    public String schema;
+
+    public String table;
+
     /**
      * csv文件列表(表数据)
      */

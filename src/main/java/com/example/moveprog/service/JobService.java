@@ -1,6 +1,7 @@
 package com.example.moveprog.service;
 
 import com.example.moveprog.entity.MigrationJob;
+import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.MigrationJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,6 +17,7 @@ import java.util.List;
 public class JobService {
 
     private final MigrationJobRepository jobRepo;
+    private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     public List<MigrationJob> getAllJobs() {
         return jobRepo.findAll();
@@ -36,7 +38,14 @@ public class JobService {
     }
 
     @Transactional
+    public void stopJob(Long jobId) {
+        // 2. 【新增】清理连接池资源
+        targetDatabaseConnectionManager.invalidateJob(jobId);
+    }
+
+    @Transactional
     public void deleteJob(Long id) {
         jobRepo.deleteById(id);
     }
+
 }

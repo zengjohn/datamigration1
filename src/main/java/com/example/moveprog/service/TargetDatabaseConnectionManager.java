@@ -3,7 +3,6 @@ package com.example.moveprog.service;
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.repository.MigrationJobRepository;
-import com.example.moveprog.repository.QianyiDetailRepository;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
@@ -13,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -23,8 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @RequiredArgsConstructor
 public class TargetDatabaseConnectionManager {
-    private final QianyiDetailRepository detailRepo;
     private final MigrationJobRepository jobRepo;
+    private final JdbcHelper jdbcHelper;
     private final AppProperties appProperties;
 
     // 【核心】缓存：JobId -> 连接池
@@ -55,6 +55,9 @@ public class TargetDatabaseConnectionManager {
         MigrationJob migrationJob = jobRepo.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
 
+        // 2. 从配置文件查 调优参数
+        AppProperties.TargetDbConfig template = appProperties.getTargetDbConfig();
+
         // 2. 配置 HikariCP
         HikariConfig config = new HikariConfig();
 
@@ -69,14 +72,13 @@ public class TargetDatabaseConnectionManager {
         config.setJdbcUrl(url);
         config.setUsername(user);
         config.setPassword(password);
-
-        // 3. 连接池参数 (可以从 AppProperties 读取全局默认值，也可以硬编码)
-        config.setMaximumPoolSize(60); // 配合您的 128C 机器
-        config.setMinimumIdle(10);
-        config.setAutoCommit(false);   // 批处理必须 false
-        config.setConnectionTimeout(30000);
-        config.setIdleTimeout(600000);
         config.setPoolName("HikariPool-Job-" + jobId);
+
+        // --- 模板部分 (来自 yml) ---
+        config.setMaximumPoolSize(template.getMaxPoolSize());
+        config.setMinimumIdle(template.getMinIdle());
+        config.setConnectionTimeout(template.getConnectionTimeout());
+        config.setAutoCommit(template.isAutoCommit());
 
         return new HikariDataSource(config);
     }
@@ -100,10 +102,10 @@ public class TargetDatabaseConnectionManager {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void deleteLoadOldData(Long jobId, String tableName, Long splitId) throws SQLException {
+    public void deleteLoadOldData(Long jobId, Long splitId) throws SQLException, IOException {
         MigrationJob migrationJob = jobRepo.findById(jobId).orElseThrow();
         try (Connection conn = getConnection(migrationJob.getId(), false)) {
-            String deleteSql = "DELETE FROM " + tableName + " WHERE csvid=" + splitId;
+            String deleteSql = jdbcHelper.deleteSql(splitId);
             executeUpdateSql(conn, deleteSql);
         }
     }

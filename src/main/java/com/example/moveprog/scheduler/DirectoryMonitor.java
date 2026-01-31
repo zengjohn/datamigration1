@@ -14,6 +14,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,10 +76,11 @@ public class DirectoryMonitor {
      */
     @Transactional
     public void processOkFile(MigrationJob job, File okFile) {
+        String myIp = config.getCurrentNodeIp();
         String okPath = okFile.getAbsolutePath();
         // 1. 防重：如果已经处理过（无论成功失败），直接跳过
         // 如果用户想重试 FAIL_PARSE 的任务，需要在界面点击“重试”（需配套接口删除旧记录）
-        if (qianyiRepo.existsByOkFilePath(okPath)) return;
+        if (qianyiRepo.existsByOkFilePathAndNodeId(okPath, myIp)) return;
 
         log.info("发现新任务文件: {}", okPath);
 
@@ -86,7 +88,6 @@ public class DirectoryMonitor {
         Qianyi qianyi = new Qianyi();
         // 【关键】自动绑定当前机器的 IP
         // 因为 DirectoryMonitor 只能扫到本机硬盘的文件，所以这个任务一定是本机的
-        String myIp = config.getCurrentNodeIp();
         qianyi.setNodeId(myIp);
         qianyi.setJobId(job.getId());
         qianyi.setOkFilePath(okPath);
@@ -127,11 +128,26 @@ public class DirectoryMonitor {
             if (!ddlFile.exists()) {
                 throw new RuntimeException("找不到 DDL 文件: " + ddlFile.getAbsolutePath());
             }
-            String finalDdlPath = ddlFile.getAbsolutePath();
 
+
+            String finalDdlPath = ddlFile.getAbsolutePath();
             // 更新表名 (使用 DDL 文件名)
             String realTableName = ddlFile.getName().replace(".sql", "");
-            qianyi.setTableName(realTableName);
+            String[] splits = StringUtils.split(realTableName, "-");
+            if (splits.length == 1) {
+                qianyi.setSchemaName(null);
+                qianyi.setTableName(splits[0]);
+            } else {
+                qianyi.setSchemaName(splits[0]);
+                qianyi.setTableName(splits[1]);
+            }
+            if (Objects.nonNull(content.schema) && !content.schema.trim().isEmpty()) {
+                qianyi.setSchemaName(content.schema.trim());
+            }
+            if (Objects.nonNull(content.table) && !content.table.trim().isEmpty()) {
+                qianyi.setTableName(content.table.trim());
+            }
+
             qianyi.setDdlFilePath(finalDdlPath);
 
             // 3.2 校验 CSV 列表
@@ -166,7 +182,8 @@ public class DirectoryMonitor {
                 detail.setNodeId(myIp);
                 detail.setJobId(qianyi.getJobId());
                 detail.setQianyiId(qianyi.getId());
-                detail.setTableName(realTableName);
+                detail.setSchemaName(qianyi.getSchemaName());
+                detail.setTableName(qianyi.getTableName());
                 detail.setSourceCsvPath(absCsvPath);
                 detail.setStatus(DetailStatus.NEW);
                 detail.setProgress(0);

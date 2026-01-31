@@ -120,7 +120,7 @@ public class TranscodeService {
 
             for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
                 try {
-                    targetDatabaseConnectionManager.deleteLoadOldData(migrationJob.getId(), qianyiDetail.getTableName(), byDetailIdAndStatus.getId());
+                    targetDatabaseConnectionManager.deleteLoadOldData(migrationJob.getId(), byDetailIdAndStatus.getId());
                 } catch (Exception e) {
                 }
             }
@@ -153,6 +153,7 @@ public class TranscodeService {
         List<String> ddlFilePath = SchemaParseUtil.parseColumnNamesFromDdl(findQianyiById.getDdlFilePath());
         String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
         String transcodeSplitDirectory = MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob.getOutDirectory());
+        Path transcodeSplitResultDirectory = MigrationOutputDirectorUtil.transcodeSplitResultDirectory(transcodeSplitDirectory, detailId);
 
         int expectedColumns = ddlFilePath.size();
 
@@ -188,6 +189,7 @@ public class TranscodeService {
                 // 确保输出目录存在
                 Files.createDirectories(Paths.get(transcodeSplitDirectory));
                 Files.createDirectories(Paths.get(errorDirectory));
+                Files.createDirectories(transcodeSplitResultDirectory);
 
                 while (null != (originalLine = parser.parseNext())) {
                     // 【埋点】每处理 1000 行检查一次
@@ -295,7 +297,7 @@ public class TranscodeService {
                     }
                 }
 
-                if (lineNo-csvWriterContext.startLineNo > 0) {
+                if (Objects.nonNull(csvWriterContext) && (lineNo-csvWriterContext.startLineNo > 0)) {
                     Long startLineNo = csvWriterContext.startLineNo;
                     csvWriterContext.close();
                     // 保存切分记录到数据库

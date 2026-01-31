@@ -33,11 +33,20 @@ public class Qianyi extends BaseNodeEntity {
      */
     @Column(nullable = false, length = 255)
     private String okFilePath;
+
+    /**
+     * 目标库名, 如果为空则库名由url决定
+     */
+    @Column(nullable = true, length = 255)
+    private String schemaName;
+
+
     /**
      * 目标端表名 （目前的设计，要求一个ok文件中所有的csv文件都装载到同一张表)
      */
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String tableName;
+
     /**
      * schema文件路径
      */
@@ -54,9 +63,13 @@ public class Qianyi extends BaseNodeEntity {
     @Column(columnDefinition = "TEXT")
     private String errorMsg;
 
+    @Column(name = "create_time", insertable = false, updatable = false,
+           columnDefinition = "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+    @org.hibernate.annotations.Generated(org.hibernate.annotations.GenerationTime.ALWAYS)
     private LocalDateTime createTime;
-    private LocalDateTime updateTime;
 
-    @PrePersist void onCreate() { createTime = LocalDateTime.now(); updateTime = LocalDateTime.now(); }
-    @PreUpdate void onUpdate() { updateTime = LocalDateTime.now(); }
+    @Column(name = "update_time", insertable = false, updatable = false,
+            columnDefinition = "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+    @org.hibernate.annotations.Generated(org.hibernate.annotations.GenerationTime.ALWAYS)
+    private LocalDateTime updateTime;
 }

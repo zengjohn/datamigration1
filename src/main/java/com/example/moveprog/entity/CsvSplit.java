@@ -2,7 +2,6 @@ package com.example.moveprog.entity;
 
 import com.example.moveprog.enums.CsvSplitStatus;
 import jakarta.persistence.*;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -66,7 +65,15 @@ public class CsvSplit extends BaseNodeEntity {
     @Column(columnDefinition = "TEXT")
     private String errorMsg;
 
+    @Column(name = "update_time",
+            // 【关键1】DDL 定义：告诉 Hibernate 建表时用什么 SQL
+            columnDefinition = "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+            // 【关键2】禁止 Java 写入：JPA 在生成 insert/update 语句时会忽略这个字段
+            insertable = false,
+            updatable = false)
+    // 【关键】自动刷新：告诉 Hibernate，每次插入或更新后，立刻从 DB 读回最新的时间
+    // 这样你在 save() 之后，立即 getUpdateTime() 也能拿到正确的时间
+    @org.hibernate.annotations.Generated(org.hibernate.annotations.GenerationTime.ALWAYS)
     private LocalDateTime updateTime;
-    @PrePersist @PreUpdate void onUpdate() { updateTime = LocalDateTime.now(); }
 
 }

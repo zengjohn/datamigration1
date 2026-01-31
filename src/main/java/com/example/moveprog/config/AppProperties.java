@@ -36,13 +36,39 @@ public class AppProperties {
 
     private TranscodeJob transcodeJob = new TranscodeJob();
 
-    private MigrationThreadPool migrationThreadPool = new MigrationThreadPool();
-
     private String jdbcOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
 
     private LoadJdbc loadJdbc = new LoadJdbc();
 
     private Verify verify = new Verify();
+
+    // 线程池配置嵌套对象
+    private ExecutorGroup executor = new ExecutorGroup();
+
+    // 嵌套配置对象
+    private TargetDbConfig targetDbConfig = new TargetDbConfig();
+
+    @Data
+    public static class ExecutorGroup {
+        private ExecutorConfig transcode = new ExecutorConfig();
+        private ExecutorConfig load = new ExecutorConfig();
+        private ExecutorConfig verify = new ExecutorConfig();
+    }
+
+    @Data
+    public static class ExecutorConfig {
+        private int coreSize = 10;
+        private int maxSize = 10;
+        private int queueCapacity = 100;
+    }
+
+    @Data
+    public static class TargetDbConfig {
+        private int maxPoolSize = 60;      // 默认值
+        private int minIdle = 10;
+        private long connectionTimeout = 30000;
+        private boolean autoCommit = false;
+    }
 
     @Data
     public static class Csv {
@@ -199,32 +225,6 @@ public class AppProperties {
         private int splitRows = 500_000;
     }
 
-    @Data
-    public static class ThreadPool {
-        @Min(value = 1, message = "核心线程数 core-pool-size 必须大于 0")
-        private int corePoolSize = 2;
-        @Min(value = 1, message = "最大线程数 max-pool-size 必须大于 0")
-        private int maxPoolSize = 4;
-    }
-
-    /**
-     * 线程池配置
-     */
-    @Data
-    public static class MigrationThreadPool {
-        /**
-         * 转码
-         */
-        private ThreadPool transcode = new ThreadPool();
-        /**
-         * 装载
-         */
-        private ThreadPool load = new ThreadPool();
-        /**
-         * 验证
-         */
-        private ThreadPool verify = new ThreadPool();
-    }
 
     /**
      * 转码配置
@@ -256,12 +256,21 @@ public class AppProperties {
          */
         private int batchSize = 5000;
 
+        private int maxRetries = 3;
+        private int queryTimeout = 600; // 10分钟超时
+
         /**
          * 【新增】是否使用 LOAD DATA LOCAL INFILE
          * true: 使用极速模式 (默认)
          * false: 使用通用 JDBC Batch Insert 模式 (保底, 慢)
          */
-        private boolean useLocalInfile = true;
+        private boolean useLocalInfile = false;
+
+        private String tableQuoteChar = "`";
+        private String columnQuoteChar = "`";
+        // 列名
+        private String columnNameCsvId = "csv_id";
+        private String columnNameSourceRowNo = "source_row_no";
     }
 
     /**

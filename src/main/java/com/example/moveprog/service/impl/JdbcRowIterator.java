@@ -24,6 +24,7 @@ public class JdbcRowIterator implements CloseableRowIterator {
 
         this.conn = targetDatabaseConnectionManager.getConnection(jobId, true);
         this.ps = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+        this.ps.setQueryTimeout(600);
         if (fetchSize < 0) {
             // 【关键】必须设置为 Integer.MIN_VALUE 才能开启 MySQL 的流式读取
             this.ps.setFetchSize(Integer.MIN_VALUE); // 开启流式

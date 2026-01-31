@@ -3,22 +3,22 @@ package com.example.moveprog.repository;
 import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.enums.CsvSplitStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * 一个大机csv文件拆分成多个用于并发装载的csv文件
  */
 @Repository
-public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
+public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long>, JpaSpecificationExecutor<CsvSplit> {
 
-    List<CsvSplit> findByDetailIdAndStatus(Long detailId, CsvSplitStatus status);
+    //List<CsvSplit> findByDetailIdAndStatus(Long detailId, CsvSplitStatus status);
 
     List<CsvSplit> findByDetailId(Long detailId);
 
@@ -26,14 +26,14 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
      * 统计某源文件任务下，未成功的切分文件数量
      * 用途: LoadService 判断整个 Detail 是否可以进入下一阶段 (PASS 或 WAIT_VERIFY)
      */
-    long countByDetailIdAndStatusNot(Long detailId, CsvSplitStatus status);
+    //long countByDetailIdAndStatusNot(Long detailId, CsvSplitStatus status);
 
     // --- 【新增】给 Dispatcher 用的方法 ---
     // 抢占装载/验证任务
     @Query(value = """
         SELECT * FROM csv_split 
         WHERE status = :status 
-        AND node_id = :nodeId  -- 如果您用了节点绑定，加上这个更安全；没用则去掉
+        AND node_id = :nodeId
         LIMIT 20 
         FOR UPDATE SKIP LOCKED 
         """, nativeQuery = true)
@@ -41,11 +41,24 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
             @Param("status") String status,
             @Param("nodeId") String nodeId);
 
-    // 僵尸任务检测 (也只检测本机卡住的任务，别去管别的机器)
-    List<CsvSplit> findByStatusAndNodeIdAndUpdateTimeBefore(CsvSplitStatus status, String nodeId, LocalDateTime time);
+    // 逻辑：直接查找并更新那些 status='LOADING' 且 update_time 早于 (NOW - 30分钟) 的记录
+    // 僵尸任务检测
+    // 这样根本不需要把数据查回 Java 做减法，彻底规避时区问题
+    @Modifying
+    @Transactional
+    @Query(value = """
+        UPDATE csv_split  
+        SET status = :newStatus, error_msg = '僵尸任务重置(DB判定)' 
+        WHERE status = :oldStatus  
+        AND node_id = :nodeId 
+        AND update_time < DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+        """, nativeQuery = true)
+    int resetZombieTasksDirectly(
+            @Param("oldStatus") String oldStatus,
+            @Param("newStatus") String newStatus,
+            @Param("nodeId") String nodeId);
 
     /**
-     * (可选) 删除关联的切分记录
      * 用途: 如果需要重置整个转码过程，可能需要先清理旧的切分记录
      */
     @Modifying
@@ -58,26 +71,24 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long> {
     @Query("DELETE FROM CsvSplit s WHERE s.qianyiId = :qianyiId")
     void deleteByQianyiId(Long qianyiId);
 
-    List<CsvSplit> findTop20ByStatus(CsvSplitStatus status);
-
-    List<CsvSplit> findByJobId(Long jobId);
+    //List<CsvSplit> findTop20ByStatus(CsvSplitStatus status);
+    //List<CsvSplit> findByJobId(Long jobId);
 
     @Modifying
     @Transactional
-    @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.status = :oldStatus")
+    @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.status = :oldStatus and s.nodeId = :nodeId")
     int resetStatus(
             @Param("oldStatus") CsvSplitStatus oldStatus,
-            @Param("newStatus") CsvSplitStatus newStatus);
-
-    List<CsvSplit> findByStatusAndUpdateTimeBefore(CsvSplitStatus status, LocalDateTime updateTime);
+            @Param("newStatus") CsvSplitStatus newStatus,
+            @Param("nodeId") String nodeId);
 
     /**
      * 【新增】调度器专用：极速更新状态
      * 只有当当前状态符合预期时才更新 (CAS 乐观锁思想，双重保险)
      */
     @Modifying
-    @Query("UPDATE CsvSplit s SET s.status = :newStatus, s.updateTime = CURRENT_TIMESTAMP WHERE s.id = :id AND s.status = :oldStatus")
-    @Transactional // <--- 【核心修复】加上这个，确保该方法自带事务运行
+    @Query("UPDATE CsvSplit s SET s.status = :newStatus WHERE s.id = :id AND s.status = :oldStatus")
+    @Transactional // 【核心修复】加上这个，确保该方法自带事务运行
     int updateStatus(
             @Param("id") Long id,
             @Param("oldStatus") CsvSplitStatus oldStatus,

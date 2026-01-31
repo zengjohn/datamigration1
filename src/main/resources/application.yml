@@ -16,12 +16,28 @@ spring:
       # classpath:/static/ 表示 Jar 包内部的默认文件夹 (优先级低，作为兜底)
       static-locations: file:./static/, classpath:/static/
 
+  # 1. 元数据库配置 (Spring 自动托管)
   # 数据库配置 (存放 qianyi_main, qianyi_detail 的元数据库)
   datasource:
     url: jdbc:mysql://localtestdb:3316/test1?useSSL=false&useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&allowMultiQueries=true&tinyInt1isBit=false&yearIsDateType=false&allowPublicKeyRetrieval=true&connectTimeout=360000&socketTimeout=3600000&failOverReadOnly=false&failOverReadOnly=false&autoReconnect=true
     username: root
     password: 111111
     driver-class-name: com.mysql.cj.jdbc.Driver
+
+    # 元数据库的 HikariCP 连接池设置
+    hikari:
+      pool-name: MetaHikariPool
+      # 【核心策略】元库只做状态更新(UPDATE status=RUNNING)，耗时极短(ms级)。
+      # 即使有 100 个线程在跑任务，30 个连接足够轮转过来。
+      # 不要设太大，以免 5 台机器总连接数(5*30=150)对 MySQL 造成压力。
+      maximum-pool-size: 30
+      minimum-idle: 10
+      # 状态更新非常快，如果 30秒 拿不到连接说明 DB 挂了
+      connection-timeout: 30000
+      # 验证连接有效性，防止拿旧连接报错
+      validation-timeout: 3000
+      # 只有 meta 库需要检测连接泄漏，防止开发写代码忘了关连接
+      leak-detection-threshold: 2000
 
   # JPA 配置
   jpa:
@@ -83,21 +99,63 @@ app:
   performance:
     read-buffer-size: 16777216  # 16MB (读取大文件建议加大)
     write-buffer-size: 2097152  # 2MB
-    split-rows: 2000000          # 多少行切分一个文件
+    # Split JDBC 模式：文件大小 10MB (约 5-10万行),	Load Data 模式：50MB (约 20-50万行), JDBC 模式文件小一点，重试成本低
+    split-rows: 100000          # 多少行切分一个文件
     max-chars-per-column: 100000 # 防止某些超长备注导致OOM
 
-  migration-thread-pool:
+  executor:
+    # ==========================================
+    # 2. 线程池配置 (各司其职)
+    # ==========================================
+    # --- 转码 (CPU 密集型) ---
     transcode:
-      core-pool-size: 2
-      max-pool-size: 4
-    load:
-      core-pool-size: 5
-      max-pool-size: 10
-    verify:
-      core-pool-size: 5
-      max-pool-size: 10
+      # 128核 CPU，即使留出一半给系统和 GC，给 64 个核心跑计算也是安全的。
+      # 这是一个纯 CPU + 本地 SSD 读写的操作，不涉及网络 IO，线程数≈核心数效率最高。
+      core-size: 64
+      max-size: 64
+      # 队列稍微大点，作为缓冲
+      queue-capacity: 500
 
-  # 验证配置 (保留之前的)
+    # --- 装载 (IO/网络 密集型) ---
+    load:
+      # 瓶颈在网络 RTT 和 TDSQL 写入速度。
+      # 需要较多线程来填满网络等待时间。
+      # 设定为 50，留出余量给 Verify。
+      core-size: 50
+      max-size: 50
+      queue-capacity: 200
+
+    # --- 验证 (IO/网络 密集型) ---
+    verify:
+      # 验证是 SELECT Count/Sum，速度通常比 Insert 快。
+      # 给 20 个并发足够追平 50 个 Load 的产生速度。
+      core-size: 20
+      max-size: 20
+      queue-capacity: 200
+
+
+  # ==========================================
+  # 3. 目标库连接池模板 (Target DB)
+  # ==========================================
+  # 目标库连接池的“默认模板配置”
+  # 这些值会被注入到 AppProperties 中，供 TargetDatabaseConnectionManager 使用
+  target-db-config:
+    # Load线程(50) + Verify线程(20) = 70 并发。
+    # 连接池必须 >= 70，否则线程拿不到连接会报错或空转。
+    # 给 80 是为了留 10 个余量给临时查询或 Admin 操作。
+    max-pool-size: 80
+    # 保持一定的热连接，避免每次突发任务都要三次握手
+    min-idle: 20
+
+    # 目标库可能会因为繁忙响应慢，稍微容忍久一点的等待
+    connection-timeout: 60000
+
+    # JDBC Batch 必须关闭自动提交(不能修改此配置)
+    auto-commit: false
+
+    # 一个连接最长存活 30 分钟，防止服务端因为 wait_timeout 踢掉
+    max-lifetime: 1800000sss
+
   transcode-job:
     max-error-count: 1000
 
@@ -105,11 +163,16 @@ app:
     pre-sql-list:
       - "SET unique_checks=0"
       - "SET foreign_key_checks=0"
+    batch-size: 5000
+    use-local-infile: false
+    column-quote-char: "`"
+    max-retries: 3
+    query-timeout: 600
 
   verify:
     strategy: USE_SOURCE_FILE
     max-diff-count: 1000
-    #fetch-size: 100
+    #fetch-size: -1
 
 logging:
   level:

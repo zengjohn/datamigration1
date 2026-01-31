@@ -26,14 +26,14 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
      * 用途: MigrationDispatcher 抓取 "NEW" (待转码) 的任务
      * // --- 原有的方法 (留给管理端/Nginx查看总进度用，查所有节点) ---
      */
-    List<QianyiDetail> findByStatus(DetailStatus status);
+    //List<QianyiDetail> findByStatus(DetailStatus status);
 
 
     /**
      * 查询处于多个状态之一的任务
      * 用途: MigrationDispatcher 抓取 "WAIT_LOAD" 和 "WAIT_RELOAD" 的任务
      */
-    List<QianyiDetail> findByStatusIn(Collection<DetailStatus> statuses);
+    //List<QianyiDetail> findByStatusIn(Collection<DetailStatus> statuses);
 
     /**
      * 统计某个批次下，未达到指定状态的任务数量
@@ -49,11 +49,11 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
      * @param status 状态枚举
      * @return 前5条符合条件的记录
      */
-    List<QianyiDetail> findTop5ByStatus(DetailStatus status);
+    //List<QianyiDetail> findTop5ByStatus(DetailStatus status);
 
-    List<QianyiDetail> findByQianyiId(Long qianyiId);
+    //List<QianyiDetail> findByQianyiId(Long qianyiId);
 
-    List<QianyiDetail> findByJobId(Long jobId);
+    //List<QianyiDetail> findByJobId(Long jobId);
 
     //Page<QianyiDetail> findByJobId(Long jobId, Pageable pageable);
     Page<QianyiDetail> findByQianyiId(Long qianyiId, Pageable pageable);
@@ -68,7 +68,7 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     @Query(value = """
         SELECT * FROM qianyi_detail 
         WHERE status = :status 
-        AND node_id = :nodeId  -- 如果您用了节点绑定，加上这个更安全；没用则去掉
+        AND node_id = :nodeId
         LIMIT 5 
         FOR UPDATE SKIP LOCKED 
         """, nativeQuery = true)
@@ -77,7 +77,7 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
             @Param("nodeId") String nodeId);
 
     // 统计也是一样
-    long countByQianyiIdAndStatusNotAndNodeId(Long qianyiId, DetailStatus status, String nodeId);
+    //long countByQianyiIdAndStatusNotAndNodeId(Long qianyiId, DetailStatus status, String nodeId);
 
     // 方法 A: 通过命名规范删除 (Spring Data JPA 自动实现)
     // 只要你的实体里有 qianyiId 这个字段，且是 Long 类型
@@ -91,10 +91,11 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
 
     @Modifying
     @Transactional
-    @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus")
+    @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.status = :oldStatus and d.nodeId = :nodeId")
     int resetStatus(
             @Param("oldStatus") DetailStatus oldStatus,
-            @Param("newStatus") DetailStatus newStatus);
+            @Param("newStatus") DetailStatus newStatus,
+            @Param("nodeId") String nodeId);
 
     /**
      * 更新转码失败行数
@@ -116,8 +117,8 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
      * @return
      */
     @Modifying
-    @Transactional // <--- 【核心修复】加上这个，确保该方法自带事务运行
-    @Query("UPDATE QianyiDetail d SET d.status = :newStatus, d.updateTime = CURRENT_TIMESTAMP WHERE d.id = :id AND d.status = :oldStatus")
+    @Transactional // 【核心修复】加上这个，确保该方法自带事务运行
+    @Query("UPDATE QianyiDetail d SET d.status = :newStatus WHERE d.id = :id AND d.status = :oldStatus")
     int updateStatus(
             @Param("id") Long id,
             @Param("oldStatus") DetailStatus oldStatus,

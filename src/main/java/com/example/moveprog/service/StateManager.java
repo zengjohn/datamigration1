@@ -69,14 +69,10 @@ public class StateManager {
     @Transactional
     public void resetSplitForRetry(Long splitId) {
         CsvSplit split = splitRepo.findById(splitId).orElseThrow();
-        
         // 只有失败状态才允许重试
-        if (split.getStatus() == CsvSplitStatus.FAIL_LOAD) {
+        if (split.getStatus() == CsvSplitStatus.FAIL_LOAD || split.getStatus() == CsvSplitStatus.FAIL_VERIFY) {
             split.setStatus(CsvSplitStatus.WAIT_LOAD);
             split.setErrorMsg("人工重试-等待装载");
-        } else if (split.getStatus() == CsvSplitStatus.FAIL_VERIFY) {
-            split.setStatus(CsvSplitStatus.WAIT_VERIFY);
-            split.setErrorMsg("人工重试-等待验证");
         } else {
             throw new RuntimeException("当前状态不允许重试");
         }

@@ -1,5 +1,8 @@
 package com.example.moveprog;
 
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -12,28 +15,14 @@ public class TestDataGenerator {
     private static final String CHARSET_IBM = "x-IBM1388";
     private static final String CHARSET_UTF8 = "UTF-8";
 
-    public static void main(String[] args) throws Exception {
-        try {
-            Files.createDirectories(Paths.get(OUT_DIR));
-            System.out.println(">>> 开始生成测试数据，输出目录: " + OUT_DIR);
-
-            generateBasic();
-            generateCategoryA_Basic();
-            generateCategoryB_CsvFormat();
-            generateCategoryC_BusinessRules();
-            generateCategoryD_Performance(100_000); // 生成10万行做演示，可改为 10_000_000
-            generateCategoryE_Exceptions();
-            generateCategoryF_Tunneling(); // 【新增】针对 FastEscapeHandler
-
-            System.out.println(">>> 所有测试文件生成完毕！");
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            System.err.println("生成失败，请检查是否引入了 icu4j 依赖");
-        }
+    @BeforeAll
+    public static void setUp() throws IOException {
+        Files.createDirectories(Paths.get(OUT_DIR));
+        System.out.println(">>> 开始生成测试数据，输出目录: " + OUT_DIR);
     }
 
-    private static void generateBasic() throws IOException {
+    @Test
+    public void generateBasic1() throws IOException {
         String filename = OUT_DIR + "/test_ibm1388.csv";
         // 1. 模拟数据：包含普通中文、英文、以及"生僻字转义符"(测试 Tunneling 功能)
         // 对应 FastEscapeHandler 的逻辑: \2CC56\ 会被还原
@@ -49,7 +38,8 @@ public class TestDataGenerator {
     // ==========================================
     // A. 基础与编码验证
     // ==========================================
-    private static void generateCategoryA_Basic() throws IOException {
+    @Test
+    public void generateCategoryA_Basic() throws IOException {
         String filename = OUT_DIR + "/A_Basic_Encoding.csv";
         // 包含：英文、普通中文、数字
         StringBuilder sb = new StringBuilder();
@@ -65,7 +55,8 @@ public class TestDataGenerator {
     // ==========================================
     // B. 数据格式边界验证 (CSV 解析健壮性)
     // ==========================================
-    private static void generateCategoryB_CsvFormat() throws IOException {
+    @Test
+    public void generateCategoryB_CsvFormat() throws IOException {
         String filename = OUT_DIR + "/B_Csv_Format_Edge.csv";
         StringBuilder sb = new StringBuilder();
         //sb.append("user_id,user_name,balance\n");
@@ -94,7 +85,8 @@ public class TestDataGenerator {
     // ==========================================
     // C. 业务规则边界验证
     // ==========================================
-    private static void generateCategoryC_BusinessRules() throws IOException {
+    @Test
+    public void generateCategoryC_BusinessRules() throws IOException {
         String filename = OUT_DIR + "/C_Business_Rules.csv";
         StringBuilder sb = new StringBuilder();
         //sb.append("user_id,user_name,balance\n");
@@ -117,7 +109,7 @@ public class TestDataGenerator {
     // ==========================================
     // D. 批量与性能验证
     // ==========================================
-    private static void generateCategoryD_Performance(int rows) throws IOException {
+    private void generateCategoryD_Performance(int rows) throws IOException {
         String filename = OUT_DIR + "/D_Performance_" + rows + ".csv";
         // 使用 BufferedWriter 避免内存溢出
         try (BufferedWriter writer = new BufferedWriter(
@@ -139,7 +131,8 @@ public class TestDataGenerator {
     // ==========================================
     // E. 异常与容错验证 (二进制破坏)
     // ==========================================
-    private static void generateCategoryE_Exceptions() throws IOException {
+    @Test
+    public void generateCategoryE_Exceptions() throws IOException {
         // E1. 错误编码混杂 (IBM1388 中混入 UTF-8)
         File f1 = new File(OUT_DIR + "/E1_Mixed_Encoding.csv");
         try (FileOutputStream fos = new FileOutputStream(f1)) {
@@ -169,7 +162,8 @@ public class TestDataGenerator {
     // ==========================================
     // F. [新增] 转义穿透 (Tunneling) 验证
     // ==========================================
-    private static void generateCategoryF_Tunneling() throws IOException {
+    @Test
+    public void generateCategoryF_Tunneling() throws IOException {
         String filename = OUT_DIR + "/F_Tunneling_Handler.csv";
         StringBuilder sb = new StringBuilder();
         //sb.append("user_id,user_name,balance\n");

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>数据迁移运维控制台 V3.0</title>
     <link href="/assets/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/assets/css/bootstrap-icons.css" rel="stylesheet">
+    <link href="/assets/css/bootstrap-icons.min.css" rel="stylesheet">
     <script src="/assets/js/vue.global.js"></script>
     <script src="/assets/js/axios.min.js"></script>
 
@@ -211,11 +211,35 @@
 
     <div class="drawer-overlay" v-if="showSplitDrawer" @click="showSplitDrawer = false"></div>
     <div class="drawer" :class="{open: showSplitDrawer}">
-        <div class="drawer-header">
-            <h5 class="mb-0 text-truncate" :title="selectedDetail?.sourceCsvPath">
-                <i class="bi bi-layers me-2"></i>切片详情
-            </h5>
-            <button type="button" class="btn-close" @click="showSplitDrawer = false"></button>
+        <div class="drawer-header flex-column align-items-stretch gap-2">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 text-truncate">
+                    <i class="bi bi-layers me-2"></i>切片控制台
+                    <span class="badge bg-secondary ms-2" style="font-size: 0.8rem">Detail ID: {{ selectedDetail?.id }}</span>
+                </h5>
+                <button type="button" class="btn-close" @click="showSplitDrawer = false"></button>
+            </div>
+
+            <div class="d-flex gap-2 align-items-center">
+                <div class="input-group input-group-sm" style="width: 120px;">
+                    <input type="text" class="form-control" placeholder="切片ID" v-model="splitQuery.id" @keyup.enter="loadSplits">
+                </div>
+
+                <select class="form-select form-select-sm" v-model="splitQuery.status" @change="loadSplits" style="width: 140px;">
+                    <option value="">-- 所有状态 --</option>
+                    <option value="FAIL_LOAD,FAIL_VERIFY">⚠️ 所有异常</option>
+                    <option value="FAIL_LOAD">❌ 装载失败</option>
+                    <option value="FAIL_VERIFY">❌ 验证不符</option>
+                    <option value="WAIT_LOAD">⏳ 等待装载</option>
+                    <option value="PASS">✅ 成功 (PASS)</option>
+                </select>
+
+                <button class="btn btn-sm btn-primary" @click="loadSplits"><i class="bi bi-search"></i></button>
+            </div>
+
+            <div class="d-flex gap-3 small text-muted border-top pt-2 mt-1">
+                <span>当前显示: {{ splitPage.content.length }} / 总数: {{ splitPage.totalElements }}</span>
+            </div>
         </div>
         <div class="drawer-body p-0">
             <div class="alert alert-light border-bottom mb-0 small text-muted">
@@ -226,7 +250,7 @@
                 <tr><th>ID</th><th>切片名</th><th>状态/错误</th><th>操作</th></tr>
                 </thead>
                 <tbody>
-                <tr v-for="s in splits" :key="s.id">
+                <tr v-for="s in splitPage.content" :key="s.id">
                     <td>{{ s.id }}</td>
                     <td>{{ getFileName(s.splitFilePath) }}</td>
                     <td>
@@ -234,6 +258,12 @@
                         <div v-if="s.errorMsg" class="text-danger text-break" style="font-size: 0.75rem; line-height: 1.2;">{{ s.errorMsg }}</div>
                     </td>
                     <td>
+                        <button @click="downloadSplit(s)"
+                                class="btn btn-outline-primary btn-xs w-100 mb-1"
+                                title="下载到本地">
+                            <i class="bi bi-download"></i> 下载
+                        </button>
+
                         <button v-if="s.status === 'FAIL_LOAD'"
                                 @click="retrySplit(s)"
                                 class="btn btn-warning btn-xs w-100 mb-1">
@@ -264,8 +294,24 @@
                         </button>
                     </td>
                 </tr>
-                </tbody>
+
+                <tr v-if="!splitPage.content || splitPage.content.length === 0">
+                    <td colspan="4" class="text-center text-muted p-3">
+                        没有找到符合条件的切片数据
+                    </td>
+                </tr>
+                </tbody>>
             </table>
+
+            <div class="p-2 border-top bg-light d-flex justify-content-between align-items-center">
+                <button class="btn btn-sm btn-outline-secondary"
+                        :disabled="splitPage.first"
+                        @click="changeSplitPage(-1)">上一页</button>
+                <span class="small">第 {{ splitPage.number + 1 }} / {{ splitPage.totalPages }} 页</span>
+                <button class="btn btn-sm btn-outline-secondary"
+                        :disabled="splitPage.last"
+                        @click="changeSplitPage(1)">下一页</button>
+            </div>
         </div>
     </div>
 
@@ -339,6 +385,19 @@
     const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
     const API_BASE = window.location.origin + '/api/migration';
 
+    // 【新增】Axios 请求拦截器：自动给所有 GET 请求加时间戳
+    axios.interceptors.request.use(config => {
+        if (config.method === 'get') {
+            // 如果 params 不存在，初始化为空对象
+            config.params = config.params || {};
+            // 添加 _t 参数，值为当前时间戳
+            config.params['_t'] = new Date().getTime();
+        }
+        return config;
+    }, error => {
+        return Promise.reject(error);
+    });
+
     createApp({
         setup() {
             // --- 状态数据 ---
@@ -366,6 +425,27 @@
             const createJobError = ref('');
 
             let timer = null;
+            // 新增一个响应式变量
+            const filterErrorOnly = ref(false);
+
+            // 【新增】切片分页数据容器
+            const splitPage = ref({
+                content: [],
+                totalElements: 0,
+                totalPages: 0,
+                number: 0,
+                first: true,
+                last: true
+            });
+            // 【新增】切片查询条件
+            const splitQuery = reactive({
+                id: '',
+                status: '',
+                page: 0,
+                size: 20
+            });
+
+
 
             // --- 核心数据获取 ---
             const loadJobs = async () => {
@@ -381,6 +461,7 @@
                 const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/batches`);
                 batches.value = res.data;
             };
+
 
             const viewBadFile = async (detail) => {
                 try {
@@ -436,13 +517,6 @@
                 fetchDetails();
             };
 
-            const openSplits = async (detail) => {
-                selectedDetail.value = detail;
-                showSplitDrawer.value = true;
-                const res = await axios.get(`${API_BASE}/detail/${detail.id}/splits`);
-                splits.value = res.data;
-            };
-
             // --- 业务操作 ---
             const openCreateModal = () => {
                 createJobError.value = ''; // 每次打开弹窗先清空错误
@@ -493,6 +567,61 @@
                 fetchDetails();
             };
 
+            // --- 新增：下载切片文件逻辑 ---
+            const downloadSplit = async (split) => {
+                try {
+                    // 简单的用户提示，虽然浏览器也会显示下载进度
+                    // 如果您想加个 loading 状态，可以在这里设一个 ref
+
+                    const response = await axios.get(`${API_BASE}/split/${split.id}/download`, {
+                        responseType: 'blob' // 【关键】必须设置为 blob
+                    });
+
+                    // 1. 尝试从 Header 获取文件名
+                    // 后端 Header 格式: Content-Disposition: attachment; filename="split_123.csv"
+                    const disposition = response.headers['content-disposition'];
+                    let filename = `split_${split.id}.csv`; // 默认保底文件名
+
+                    if (disposition && disposition.indexOf('attachment') !== -1) {
+                        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                        const matches = filenameRegex.exec(disposition);
+                        if (matches != null && matches[1]) {
+                            filename = matches[1].replace(/['"]/g, '');
+                        }
+                    }
+
+                    // 2. 创建 Blob URL 并触发浏览器下载
+                    const blob = new Blob([response.data], { type: 'text/csv' });
+                    const url = window.URL.createObjectURL(blob);
+
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', filename);
+                    document.body.appendChild(link);
+                    link.click();
+
+                    // 3. 清理内存
+                    document.body.removeChild(link);
+                    window.URL.revokeObjectURL(url);
+
+                } catch (error) {
+                    console.error("下载失败", error);
+
+                    // 【关键错误处理】因为 responseType 是 blob，如果后端报错（比如返回JSON格式的错误信息），
+                    // 我们需要把 blob 转回文本才能看到报错内容
+                    if (error.response && error.response.data instanceof Blob) {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const errorText = reader.result;
+                            alert("下载失败: " + (errorText || "服务器内部错误"));
+                        };
+                        reader.readAsText(error.response.data);
+                    } else {
+                        alert("下载失败，请检查网络或日志");
+                    }
+                }
+            };
+
             // 1. 重试加载 (对应后端 /retry 接口，通常重置为 WAIT_LOAD)
             const retrySplit = async (split) => {
                 if(!confirm('确定要重试加载吗？(将删除旧数据并重新LOAD)')) return;
@@ -532,6 +661,50 @@
                 } catch(e) { alert("无法读取差异文件"); }
             };
 
+            // 加载切片数据 (核心方法)
+            // 【新增】核心加载方法：调用后端搜索接口
+            const loadSplits = async () => {
+                if (!selectedDetail.value) return;
+
+                try {
+                    // 构造查询参数
+                    const params = {
+                        page: splitQuery.page,
+                        size: splitQuery.size,
+                        // 如果输入框是空的，就不传这个参数，后端会忽略
+                        splitId: splitQuery.id || undefined,
+                        status: splitQuery.status || undefined
+                    };
+
+                    // 调用刚才定义的后端新接口
+                    const res = await axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits/search`, { params });
+                    splitPage.value = res.data;
+                } catch(e) {
+                    console.error(e);
+                    alert("加载切片数据失败，请检查后端接口是否更新");
+                }
+            };
+
+            // 【修改】打开抽屉的方法 (替换原来的 openSplits)
+            const openSplits = (detail) => {
+                selectedDetail.value = detail;
+                showSplitDrawer.value = true;
+
+                // 重置查询条件
+                splitQuery.id = '';
+                splitQuery.status = '';
+                splitQuery.page = 0;
+
+                // 加载第一页
+                loadSplits();
+            };
+
+            // 【新增】切片翻页
+            const changeSplitPage = (delta) => {
+                splitQuery.page += delta;
+                loadSplits();
+            };
+
             // --- 工具函数 ---
             const filteredJobs = computed(() => {
                 if(!jobSearch.value) return jobs.value;
@@ -564,8 +737,8 @@
                             fetchBatches(); // 刷新批次状态
                             if(selectedBatch.value) fetchDetails(); // 刷新明细进度
                             if(showSplitDrawer.value && selectedDetail.value) {
-                                // 刷新切片
-                                axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits`).then(r => splits.value = r.data);
+                                // 新的调用方式：复用 loadSplits 方法，自动带上当前的分页和查询参数
+                                loadSplits();
                             }
                         }
                     }
@@ -575,10 +748,16 @@
 
             return {
                 jobs, batches, detailsData, splits,
-                reVerifySplit,
+                reVerifySplit,downloadSplit,
+                filterErrorOnly,
                 selectedJob, selectedBatch, selectedDetail,
                 jobSearch, filteredJobs, pageConfig, loadingJobs, autoRefresh,
                 showCreateJobModal, showSplitDrawer, showDiffModal, diffContent, newJob,
+
+                splitPage,
+                splitQuery,
+                loadSplits,
+                changeSplitPage,
 
                 createJobError,
                 openCreateModal,

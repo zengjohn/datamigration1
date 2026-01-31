@@ -1,6 +1,5 @@
 package com.example.moveprog.controller;
 
-import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -9,21 +8,30 @@ import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.service.ClusterBridgeService;
 import com.example.moveprog.service.JobControlManager;
+import com.example.moveprog.service.JobService;
 import com.example.moveprog.service.StateManager;
 import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/migration")
@@ -43,7 +51,7 @@ public class MigrationController {
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
     private final JobControlManager controlManager;
 
-    private final AppProperties config;
+    private final JobService jobService;
 
     // ===========================
     // Level 1: 作业管理 (Job)
@@ -100,7 +108,11 @@ public class MigrationController {
         if ("stop".equalsIgnoreCase(action)) {
             job.setStatus(JobStatus.STOPPED);
             jobRepo.save(job);
-            if (controlManager != null) controlManager.stopJob(id); // 通知内存停止
+            jobService.stopJob(job.getId());
+            if (controlManager != null) {
+                controlManager.stopJob(id); // 通知内存停止
+                // 2. 【新增】清理连接池资源
+            }
             log.info("作业 [{}] 已停止", id);
         } else if ("resume".equalsIgnoreCase(action)) {
             job.setStatus(JobStatus.ACTIVE);
@@ -250,6 +262,58 @@ public class MigrationController {
     }
 
     /**
+     * 高级切片查询接口 (支持分页、ID搜索、状态筛选)
+     */
+    @GetMapping("/detail/{detailId}/splits/search")
+    public ResponseEntity<Page<CsvSplit>> searchSplits(
+            @PathVariable Long detailId,
+            @RequestParam(required = false) Long splitId,
+            @RequestParam(required = false) String status, // 状态字符串，如 "FAIL_LOAD,FAIL_VERIFY"
+            @PageableDefault(size = 20, sort = "id") Pageable pageable) {
+
+        Page<CsvSplit> page = splitRepo.findAll((root, query, cb) -> {
+            List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
+
+            // 1. 必须是当前 Detail 的
+            predicates.add(cb.equal(root.get("detailId"), detailId));
+
+            // 2. ID 精准搜索
+            if (splitId != null) {
+                predicates.add(cb.equal(root.get("id"), splitId));
+            }
+
+            // 3. 状态筛选 (支持逗号分隔的多选)
+            if (status != null && !status.trim().isEmpty()) {
+                String[] statuses = status.split(",");
+                List<CsvSplitStatus> validStatuses = new ArrayList<>();
+
+                for (String s : statuses) {
+                    try {
+                        // 逐个转换，坏的丢掉，好的留下
+                        validStatuses.add(CsvSplitStatus.valueOf(s.trim()));
+                    } catch (IllegalArgumentException e) {
+                        // 仅记录日志或忽略无效值
+                        log.warn("忽略无效状态查询参数: {}", s);
+                    }
+                }
+
+                if (!validStatuses.isEmpty()) {
+                    predicates.add(root.get("status").in(validStatuses));
+                } else {
+                    // 【关键】如果用户传了状态但全都是无效的（比如传了 "ABC"），
+                    // 逻辑上应该查不到任何数据，而不是返回全部。
+                    // 这里添加一个 1=0 的假条件
+                    predicates.add(cb.disjunction());
+                }
+            }
+
+            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        }, pageable);
+
+        return ResponseEntity.ok(page);
+    }
+
+    /**
      * 【重试作业】(Nuclear Option)
      * 语义：清理该切片在数据库的数据，重新执行 Load -> Verify 流程
      * 目标状态：WAIT_LOAD
@@ -263,7 +327,13 @@ public class MigrationController {
         String targetIp = split.getNodeId();
         return bridgeService.runOrProxy(targetIp, () -> {
             try {
-                // 调用 StateManager 将状态从 FAIL_X 重置为 WAIT_X
+                // 如果已经验证过，删除验证结果
+                MigrationJob migrationJob = jobRepo.findById(split.getJobId()).orElse(null);
+                if (migrationJob == null) {
+                    return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
+                }
+                deleteDiffFile(migrationJob.getOutDirectory(), split);
+                // 调用 StateManager 将状态从 FAIL_X 重置为 WAIT_LOAD
                 stateManager.resetSplitForRetry(id);
                 return ResponseEntity.ok("重试指令已下发，等待调度器执行");
             } catch (Exception e) {
@@ -320,6 +390,43 @@ public class MigrationController {
             return ResponseEntity.ok("已加入重验队列");
         });
 
+    }
+
+    /**
+     * 另一个例子：下载切片文件
+     */
+    @GetMapping("/split/{id}/download")
+    public ResponseEntity<?> downloadSplit(@PathVariable Long id) {
+        CsvSplit split = splitRepo.findById(id).orElseThrow();
+        // 这里的 nodeIp 可能在 split 表，也可能通过 detail 查到
+        String targetIp = split.getNodeId();
+
+        // 2. 调用桥接服务
+        return bridgeService.runOrProxy(targetIp, () -> {
+            try {
+                // --- 核心：本机下载逻辑 ---
+                File file = new File(split.getSplitFilePath());
+
+                if (!file.exists()) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                            .body("文件不存在: " + file.getAbsolutePath());
+                }
+
+                // 使用 FileSystemResource 实现零拷贝流式传输，内存占用极低
+                Resource resource = new FileSystemResource(file);
+
+                String filename = file.getName();
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                        .header(HttpHeaders.CONTENT_TYPE, "text/csv; charset=UTF-8") // 明确告诉浏览器这是 CSV
+                        .contentLength(file.length()) // 加上长度，浏览器能显示进度条
+                        .body(resource);
+
+            } catch (Exception e) {
+                log.error("下载文件失败", e);
+                return ResponseEntity.internalServerError().body("下载出错: " + e.getMessage());
+            }
+        });
     }
 
     private void deleteDiffFile(String outDirectory, CsvSplit split) {

@@ -19,8 +19,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * 校验服务
@@ -32,7 +30,6 @@ public class VerifyService {
     private final StateManager stateManager;
 
     private final MigrationJobRepository jobRepo;
-    private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
 
@@ -40,6 +37,7 @@ public class VerifyService {
     private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     // 注入 AppProperties 用于获取配置...
+    private final JdbcHelper jdbcHelper;
     private final AppProperties config;
 
     public void execute(Long splitId) {
@@ -96,16 +94,8 @@ public class VerifyService {
     }
 
     private JdbcRowIterator createDbIterator(CsvSplit split) throws Exception {
-        Qianyi qianyi = qianyiRepo.findById(split.getQianyiId()).orElseThrow();
-
-        String ddlFilePath = qianyi.getDdlFilePath();
-        String tableName = qianyi.getTableName();
-
-        List<String> columnNames = SchemaParseUtil.parseColumnNamesFromDdl(ddlFilePath);
-        String columnList = columnNames.stream().collect(Collectors.joining(",")) + ","+"source_row_no";
-
         // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
-        String sql = "SELECT " + columnList + " FROM " + tableName + " WHERE csvid = " + split.getId() + " ORDER BY source_row_no";
+        String sql = jdbcHelper.verifySelectSql(split.getId());
         JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getJobId(), sql, config.getVerify().getFetchSize());
         return dbIter;
     }
@@ -121,8 +111,8 @@ public class VerifyService {
             AppProperties.CsvDetailConfig ibmSource = config.getCsv().getIbmSource();
             CsvParserSettings settings = ibmSource.toParserSettings();
             // 配置跳过
-            if (split.getStartRowNo() > 1) {
-                settings.setNumberOfRowsToSkip(split.getStartRowNo());
+            if (split.getStartRowNo() >=1) {
+                settings.setNumberOfRowsToSkip(split.getStartRowNo()-1);
             }
             settings.setNumberOfRecordsToRead(split.getRowCount());
             CsvParser csvParser = new CsvParser(settings);

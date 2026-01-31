@@ -52,6 +52,11 @@ public abstract class MigrationOutputDirectorUtil {
         return Paths.get(outDirectory, "output_split").toString();
     }
 
+    public static Path transcodeSplitResultDirectory(String transcodeSplitDirectory, Long detailId) {
+        // 1. 构造子目录路径
+        return Paths.get(transcodeSplitDirectory, String.valueOf(detailId));
+    }
+
     /**
      * 转码时生产文件名
      * @param transcodeSplitDirectory 转码拆分目录
@@ -60,7 +65,10 @@ public abstract class MigrationOutputDirectorUtil {
      * @return
      */
     public static String transcodeSplitFile(String transcodeSplitDirectory, Long detailId, int fileIndex) {
-        return Paths.get(transcodeSplitDirectory, detailId + "_" + fileIndex + ".csv").toString();
+        Path detailDir = transcodeSplitResultDirectory(transcodeSplitDirectory, detailId);
+        // 【关键】确保这个子目录存在 (虽然 Files.write 会报错，但建议工具类里或者 Service 里保证创建)
+        // 为了代码纯粹性，这里只返回路径字符串。创建目录的动作交给 Service。
+        return detailDir.resolve(fileIndex + ".csv").toString();
     }
 
     /**
