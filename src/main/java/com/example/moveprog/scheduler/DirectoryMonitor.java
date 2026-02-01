@@ -10,6 +10,8 @@ import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
+import com.example.moveprog.service.JdbcHelper;
+import com.example.moveprog.service.TargetDatabaseConnectionManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,10 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -40,6 +46,9 @@ public class DirectoryMonitor {
     private final MigrationJobRepository jobRepo;
     private final QianyiRepository qianyiRepo;
     private final QianyiDetailRepository detailRepo;
+
+    private final JdbcHelper jdbcHelper;
+    private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
 
     private final AppProperties config;
     private final Gson gson = new Gson();
@@ -170,10 +179,17 @@ public class DirectoryMonitor {
                 finalCsvPaths.add(csvFile.getAbsolutePath());
             }
 
+
+            boolean exists = checkTargetTableExists(job.getId(), qianyi.getSchemaName(), qianyi.getTableName());
+            if (!exists) {
+                throw new RuntimeException("目标表" + jdbcHelper.tableNameQuote(qianyi.getSchemaName(), qianyi.getTableName()) + "不存在, 前先在目标端建表");
+            }
+
             // 4. 一切正常，保存主记录
             qianyi.setStatus(BatchStatus.PROCESSING);
             qianyi.setErrorMsg(null);
             qianyiRepo.save(qianyi);
+
 
             // 5. 保存明细记录
             for (String absCsvPath : finalCsvPaths) {
@@ -182,8 +198,6 @@ public class DirectoryMonitor {
                 detail.setNodeId(myIp);
                 detail.setJobId(qianyi.getJobId());
                 detail.setQianyiId(qianyi.getId());
-                detail.setSchemaName(qianyi.getSchemaName());
-                detail.setTableName(qianyi.getTableName());
                 detail.setSourceCsvPath(absCsvPath);
                 detail.setStatus(DetailStatus.NEW);
                 detail.setProgress(0);
@@ -204,6 +218,20 @@ public class DirectoryMonitor {
             }
             qianyiRepo.save(qianyi);
         }
+    }
+
+    private boolean checkTargetTableExists(Long jobId, String schema, String table) throws SQLException {
+        String checkExistsTableSql = jdbcHelper.checkExistsTableSql(schema, table);
+        try(Connection connection = targetDatabaseConnectionManager.getConnection(jobId, true)) {
+            try(Statement statement = connection.createStatement()) {
+                try(ResultSet resultSet = statement.executeQuery(checkExistsTableSql)) {
+                    while (resultSet.next()) {
+                        return resultSet.getLong(1) > 0L;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /**

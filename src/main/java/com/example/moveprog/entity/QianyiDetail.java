@@ -32,17 +32,6 @@ public class QianyiDetail extends BaseNodeEntity {
     private Long qianyiId;
 
     /**
-     * 冗余一下，方便查询
-     */
-    @Column(nullable = true, length = 255)
-    private String schemaName;
-
-    /**
-     * 冗余一下表名，方便查询
-     */
-    @Column(nullable = false, length = 255)
-    private String tableName;
-    /**
      * 源 CSV 路径 IBM1388.csv
      */
     @Column(nullable = false, length = 255)

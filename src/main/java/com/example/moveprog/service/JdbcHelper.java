@@ -26,21 +26,34 @@ public class JdbcHelper {
     private final QianyiRepository qianyiRepo;
     private final CsvSplitRepository csvSplitRepository;
 
+    public String checkExistsTableSql(String schema, String table) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("select count(*) from information_schema.tables where ");
+        if (schema != null && !schema.isEmpty()) {
+            sql.append("TABLE_SCHEMA='").append(schema).append("'").append(" AND ") ;
+        }
+        sql.append("TABLE_NAME='").append(table).append("'") ;
+        return sql.toString();
+    }
+
     public String qianyiTableName(Long qianyiId) {
         Qianyi qianyi = qianyiRepo.findById(qianyiId).orElseThrow();
-        if (Objects.isNull(qianyi.getSchemaName()) || qianyi.getSchemaName().isEmpty()) {
-            return tableNameQuote(qianyi.getTableName());
-        }
-
-        return tableNameQuote(qianyi.getSchemaName()) + "." + tableNameQuote(qianyi.getTableName());
+        return tableNameQuote(qianyi.getSchemaName(), qianyi.getTableName());
     }
 
     public String columnQuote(String columnName) {
         return config.getLoadJdbc().getColumnQuoteChar() + columnName + config.getLoadJdbc().getColumnQuoteChar();
     }
 
-    public String tableNameQuote(String tableName) {
-        return config.getLoadJdbc().getTableQuoteChar() + tableName + config.getLoadJdbc().getTableQuoteChar();
+    public String tableNameQuote(String schema, String table) {
+        if (Objects.isNull(schema) || schema.isEmpty()) {
+            return quoteSchemaOrTable(table);
+        }
+        return quoteSchemaOrTable(schema) + "." + quoteSchemaOrTable(table);
+    }
+
+    private String quoteSchemaOrTable(String name) {
+        return config.getLoadJdbc().getTableQuoteChar() + name + config.getLoadJdbc().getTableQuoteChar();
     }
 
     public String deleteSql(Long splitId) throws IOException {
