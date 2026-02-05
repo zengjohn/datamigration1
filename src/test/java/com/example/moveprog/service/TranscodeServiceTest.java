@@ -131,9 +131,9 @@ class TranscodeServiceTest {
                 .thenReturn(Collections.emptyList());
 
         // 5.2 模拟路径生成 (全部指向 tempDir)
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(anyString()))
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(job, qianyiId))
                 .thenReturn(splitDir.toString());
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(anyString()))
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(job, qianyiId))
                 .thenReturn(errorDir.toString());
 
         // 模拟生成的切片文件路径: .../split_dir/1_1.csv
@@ -201,7 +201,7 @@ class TranscodeServiceTest {
         when(splitRepo.findByDetailId(detailId)).thenReturn(List.of(oldSplit));
 
         // Mock OutputUtil 以便计算 verifyResultFile 路径
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.verifyResultDirectory(anyString()))
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.verifyResultDirectory(job, anyLong()))
                 .thenReturn(tempDir.resolve("verify").toString());
         outputUtilMock.when(() -> MigrationOutputDirectorUtil.verifyResultFile(anyString(), eq(555L)))
                 .thenReturn(tempDir.resolve("verify/diff_555.txt").toString());
@@ -214,7 +214,7 @@ class TranscodeServiceTest {
         verify(splitRepo).deleteByDetailId(detailId); // 验证 DB 删除调用
         // 验证是否调用了目标库清理
         try {
-            verify(targetDatabaseConnectionManager).deleteLoadOldData(eq(jobId), eq(555L));
+            verify(targetDatabaseConnectionManager).deleteLoadOldData(eq(555L));
         } catch (Exception e) {
             fail("Exception verifying db call");
         }
@@ -343,8 +343,8 @@ class TranscodeServiceTest {
         mockAppConfig("IBM-1388");
 
         schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString())).thenReturn(Collections.emptyList());
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(anyString())).thenReturn(splitDir.toString());
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(anyString())).thenReturn(errorDir.toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(job, anyLong())).thenReturn(splitDir.toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(job, anyLong())).thenReturn(errorDir.toString());
         outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(anyString(), eq(detailId), eq(1)))
                 .thenReturn(splitDir.resolve(detailId + "_1.csv").toString());
 
@@ -374,12 +374,12 @@ class TranscodeServiceTest {
         perf.setWriteBufferSize(1024);
         perf.setSplitRows(100);
 
-        AppProperties.TranscodeJob jobConfig = new AppProperties.TranscodeJob();
+        AppProperties.Transcode jobConfig = new AppProperties.Transcode();
         jobConfig.setMaxErrorCount(10);
 
         // Mock config 行为
         lenient().when(config.getCsv()).thenReturn(csv);
         lenient().when(config.getPerformance()).thenReturn(perf);
-        lenient().when(config.getTranscodeJob()).thenReturn(jobConfig);
+        lenient().when(config.getTranscode()).thenReturn(jobConfig);
     }
 }

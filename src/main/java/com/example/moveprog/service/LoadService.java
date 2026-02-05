@@ -38,6 +38,7 @@ public class LoadService {
     private final JobControlManager jobControlManager;
     private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
     private final JdbcHelper jdbcHelper;
+    private final MigrationArtifactManager migrationArtifactManager;
 
     private final AppProperties config;
 
@@ -97,7 +98,7 @@ public class LoadService {
                 }
 
                 // --- 您的核心装载逻辑 (保留您原有的逻辑) ---
-                loadSingleSplitFile(split, columnNames);
+                loadSingleSplitFile(split);
                 // ---------------------------------------
 
                 // 如果运行到这里没有抛异常，说明成功了，直接返回
@@ -112,8 +113,7 @@ public class LoadService {
                 // 既然 loadSingleSplitFile 失败了，事务可能回滚了，也可能因为网络原因状态未知
                 // 所以必须显式清理一次，保证下次重试是干净的
                 try {
-                    QianyiDetail qianyiDetail = detailRepo.findById(split.getDetailId()).orElseThrow();
-                    targetDatabaseConnectionManager.deleteLoadOldData(qianyiDetail.getJobId(), split.getId());
+                    targetDatabaseConnectionManager.deleteLoadOldData(split.getId());
                 } catch (Exception cleanupEx) {
                     log.error("重试前清理脏数据失败", cleanupEx);
                 }
@@ -129,14 +129,11 @@ public class LoadService {
      * 单个切分文件装载 (原子操作：删 + 插)
      * 单次装载逻辑 (不要在这里更新 DB 状态，只管抛异常)
      * @param split
-     * @param columnNames csv ddl中定义的列名
      */
-    private void loadSingleSplitFile(CsvSplit split, List<String> columnNames) throws Exception {
-        Long detailId = split.getDetailId();
-        QianyiDetail qianyiDetail = detailRepo.findById(detailId).orElseThrow();
-
+    private void loadSingleSplitFile(CsvSplit split) throws Exception {
         // Step 1: 幂等删除 (根据 csvid 清理旧数据)
-        targetDatabaseConnectionManager.deleteLoadOldData(qianyiDetail.getJobId(), split.getId());
+        migrationArtifactManager.cleanVerifyArtifacts(split);
+        targetDatabaseConnectionManager.deleteLoadOldData(split.getId());
 
         try (Connection conn = targetDatabaseConnectionManager.getConnection(split.getJobId(), false)) {
             executeSqlsBeforeLoad(conn);

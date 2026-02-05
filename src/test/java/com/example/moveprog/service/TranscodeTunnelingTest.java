@@ -132,6 +132,9 @@ class TranscodeTunnelingTest {
         Long jobId = 100L;
         Long qianyiId = 200L;
 
+        MigrationJob migrationJob = new MigrationJob();
+        migrationJob.setId(jobId);
+
         // 1. 写入源文件
         Path sourceFile = tempDir.resolve("source_tunnel.csv");
         Files.writeString(sourceFile, csvContent, StandardCharsets.UTF_8);
@@ -144,8 +147,8 @@ class TranscodeTunnelingTest {
         Files.createDirectories(errorDir);
 
         // 3. Mock 路径生成
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(any())).thenReturn(splitDir.toString());
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(any())).thenReturn(errorDir.toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob, any())).thenReturn(splitDir.toString());
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, any())).thenReturn(errorDir.toString());
         Path splitFile = splitDir.resolve("result.csv");
         outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(any(), any(), anyInt()))
                       .thenReturn(splitFile.toString());
@@ -214,11 +217,11 @@ class TranscodeTunnelingTest {
         perf.setWriteBufferSize(1024);
         perf.setSplitRows(1000);
 
-        AppProperties.TranscodeJob jobConfig = new AppProperties.TranscodeJob();
+        AppProperties.Transcode jobConfig = new AppProperties.Transcode();
         jobConfig.setMaxErrorCount(10);
 
         lenient().when(config.getCsv()).thenReturn(csv);
         lenient().when(config.getPerformance()).thenReturn(perf);
-        lenient().when(config.getTranscodeJob()).thenReturn(jobConfig);
+        lenient().when(config.getTranscode()).thenReturn(jobConfig);
     }
 }

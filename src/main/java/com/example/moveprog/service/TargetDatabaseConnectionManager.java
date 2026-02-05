@@ -1,8 +1,12 @@
 package com.example.moveprog.service;
 
 import com.example.moveprog.config.AppProperties;
+import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.MigrationJob;
+import com.example.moveprog.entity.QianyiDetail;
+import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
+import com.example.moveprog.repository.QianyiDetailRepository;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
@@ -16,7 +20,9 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -24,6 +30,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class TargetDatabaseConnectionManager {
     private final MigrationJobRepository jobRepo;
+    private final CsvSplitRepository splitRepo;
+    private final QianyiDetailRepository qianyiDetailRepo;
     private final JdbcHelper jdbcHelper;
     private final AppProperties appProperties;
 
@@ -101,13 +109,45 @@ public class TargetDatabaseConnectionManager {
         }
     }
 
+    /**
+     * 用于重新装载
+     * @param splitId
+     * @throws SQLException
+     * @throws IOException
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void deleteLoadOldData(Long jobId, Long splitId) throws SQLException, IOException {
-        MigrationJob migrationJob = jobRepo.findById(jobId).orElseThrow();
+    public void deleteLoadOldData(Long splitId) throws SQLException, IOException {
+        CsvSplit csvSplit = splitRepo.findById(splitId).orElseThrow();
+        MigrationJob migrationJob = jobRepo.findById(csvSplit.getJobId()).orElseThrow();
         try (Connection conn = getConnection(migrationJob.getId(), false)) {
             String deleteSql = jdbcHelper.deleteSql(splitId);
             executeUpdateSql(conn, deleteSql);
         }
+    }
+
+    /**
+     * 用于重新转码
+     * @param detailId
+     * @throws SQLException
+     * @throws IOException
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void deleteSplitsAndLoadData(Long detailId) throws SQLException, IOException {
+        QianyiDetail qianyiDetail = qianyiDetailRepo.findById(detailId).orElseThrow();
+        MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElseThrow();
+
+        List<CsvSplit> csvSplits = splitRepo.findByDetailId(detailId);
+        if (Objects.nonNull(csvSplits) && !csvSplits.isEmpty()) {
+            try (Connection conn = getConnection(migrationJob.getId(), false)) {
+                for (CsvSplit csvSplit : csvSplits) {
+                    String deleteSql = jdbcHelper.deleteSql(csvSplit.getId());
+                    executeUpdateSql(conn, deleteSql);
+                }
+            }
+        }
+
+        // DELETE FROM t_csv_split WHERE detail_id = ?
+        splitRepo.deleteByDetailId(detailId);
     }
 
     public static void executeUpdateSql(Connection conn, String sql) throws SQLException {

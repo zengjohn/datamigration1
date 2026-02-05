@@ -156,7 +156,10 @@ app:
     # 一个连接最长存活 30 分钟，防止服务端因为 wait_timeout 踢掉
     max-lifetime: 1800000sss
 
-  transcode-job:
+  job:
+    auto-clean-on-close: true
+
+  transcode:
     max-error-count: 1000
 
   load-jdbc:
@@ -173,6 +176,7 @@ app:
     strategy: USE_SOURCE_FILE
     max-diff-count: 1000
     #fetch-size: -1
+    delete-split-verify-pass: false
 
 logging:
   level:

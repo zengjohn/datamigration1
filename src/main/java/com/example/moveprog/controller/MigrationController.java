@@ -1,15 +1,13 @@
 package com.example.moveprog.controller;
 
+import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.enums.JobStatus;
 import com.example.moveprog.repository.*;
-import com.example.moveprog.service.ClusterBridgeService;
-import com.example.moveprog.service.JobControlManager;
-import com.example.moveprog.service.JobService;
-import com.example.moveprog.service.StateManager;
+import com.example.moveprog.service.*;
 import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @RestController
@@ -50,6 +49,8 @@ public class MigrationController {
     // 假设你有一个内存管理器控制停止信号
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
     private final JobControlManager controlManager;
+    private final MigrationArtifactManager migrationArtifactManager;
+    private final AppProperties config;
 
     private final JobService jobService;
 
@@ -142,6 +143,13 @@ public class MigrationController {
             batch.setUpdateTime(LocalDateTime.now());
             qianyiRepo.save(batch);
 
+            if (config.getJob().isAutoCleanOnClose()) {
+                // 异步执行清理，防止阻塞前端响应 (文件多时可能删很久)
+                CompletableFuture.runAsync(() -> {
+                    migrationArtifactManager.cleanBatchArtifacts(batch.getId());
+                });
+            }
+
             return ResponseEntity.ok("批次已结单" + (errorCount > 0 ? " (注意：包含失败任务)" : ""));
         });
     }
@@ -224,7 +232,7 @@ public class MigrationController {
                     return ResponseEntity.badRequest().body("job " + qianyiDetail.getJobId() + "不存在");
                 }
 
-                String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
+                String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, qianyiDetail.getQianyiId());
                 Path badFileName = Paths.get(errorDirectory, id + "_error.csv");
                 if (!badFileName.toFile().exists()) {
                     return ResponseEntity.ok("暂无失败记录文件 (或文件已被清理)");
@@ -250,6 +258,18 @@ public class MigrationController {
                 return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * 批量重试：只重置状态，不执行逻辑
+     */
+    @PostMapping("/detail/{detailId}/batch-retry-load")
+    public ResponseEntity<String> batchRetryLoad(@PathVariable Long detailId) {
+        // 使用自定义的 SQL 批量更新，性能极快
+        // 假设我们在 Repository 里定义了 updateStatusByDetailIdAndStatus
+        int count = splitRepo.resetFailedSplitsToWaitLoad(detailId);
+
+        return ResponseEntity.ok("已将 " + count + " 个失败切片重置为等待状态，调度器将稍后接管执行。");
     }
 
     // ===========================
@@ -332,7 +352,6 @@ public class MigrationController {
                 if (migrationJob == null) {
                     return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
                 }
-                deleteDiffFile(migrationJob.getOutDirectory(), split);
                 // 调用 StateManager 将状态从 FAIL_X 重置为 WAIT_LOAD
                 stateManager.resetSplitForRetry(id);
                 return ResponseEntity.ok("重试指令已下发，等待调度器执行");
@@ -385,7 +404,6 @@ public class MigrationController {
             if (migrationJob == null) {
                 return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
             }
-            deleteDiffFile(migrationJob.getOutDirectory(), split);
 
             return ResponseEntity.ok("已加入重验队列");
         });
@@ -429,17 +447,6 @@ public class MigrationController {
         });
     }
 
-    private void deleteDiffFile(String outDirectory, CsvSplit split) {
-        try {
-            String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory);
-            String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId());
-            Files.deleteIfExists(Paths.get(verifyResultFile));
-            log.info("已清理旧差异文件: {}", verifyResultFile);
-        } catch (Exception e) {
-            log.warn("清理旧差异文件失败 (不影响主流程): {}", e.getMessage());
-        }
-    }
-
     /**
      * 【新增】读取差异文件内容用于前端展示
      */
@@ -458,8 +465,8 @@ public class MigrationController {
                 if (migrationJob == null) {
                     return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
                 }
-                String basePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory());
-                Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(basePath, split.getId()));
+                String verifyBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, split.getQianyiId());
+                Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(verifyBasePath, split.getId()));
                 if (!Files.exists(verifyResultFile)) {
                     return ResponseEntity.ok("暂无差异文件 (可能校验通过或文件已被清理)");
                 }

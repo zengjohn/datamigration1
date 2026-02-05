@@ -137,7 +137,7 @@
                                 <td>
                                     <div class="btn-group btn-group-sm">
                                         <button v-if="b.status === 'FAIL_PARSE'" @click.stop="retryBatch(b)" class="btn btn-warning" title="重试解析"><i class="bi bi-arrow-repeat"></i></button>
-                                        <button v-if="b.status !== 'FINISHED'" @click.stop="closeBatch(b)" class="btn btn-success" title="强制结单"><i class="bi bi-check-circle"></i></button>
+                                        <button v-if="b.status !== 'FINISHED'" @click.stop="closeBatch(b)" class="btn btn-success" title="结单"><i class="bi bi-check-circle"></i></button>
                                     </div>
                                 </td>
                             </tr>
@@ -231,10 +231,20 @@
                     <option value="FAIL_LOAD">❌ 装载失败</option>
                     <option value="FAIL_VERIFY">❌ 验证不符</option>
                     <option value="WAIT_LOAD">⏳ 等待装载</option>
+                    <option value="LOADING">⏳ 装载中</option>
+                    <option value="WAIT_VERIFY">⏳ 等待验证</option>
+                    <option value="VERIFYING">⏳ 验证中</option>
                     <option value="PASS">✅ 成功 (PASS)</option>
                 </select>
 
-                <button class="btn btn-sm btn-primary" @click="loadSplits"><i class="bi bi-search"></i></button>
+                <button class="btn btn-sm btn-primary" @click="loadSplits">
+                    <i class="bi bi-search"></i>
+                </button>
+                <button class="btn btn-sm btn-danger ms-2"
+                        @click="batchRetryFailed"
+                        title="批量重试所有装载失败的任务">
+                    <i class="bi bi-lightning-charge-fill"></i> 批量救活
+                </button>
             </div>
 
             <div class="d-flex gap-3 small text-muted border-top pt-2 mt-1">
@@ -552,19 +562,41 @@
 
             const retryBatch = async (batch) => {
                 if(!confirm('确定要重试此批次吗？这将删除所有相关明细并重新扫描。')) return;
-                await axios.post(`${API_BASE}/batch/${batch.id}/retry`);
-                fetchBatches();
+                try {
+                    await axios.post(`${API_BASE}/batch/${batch.id}/retry`);
+                    fetchBatches();
+                } catch(e) {
+                    const errorMsg = e.response?.data || e.message || "操作失败";
+                    alert("无法结单: " + errorMsg);
+                }
             };
 
             const closeBatch = async (batch) => {
-                if(!confirm('确定要强制结单吗？')) return;
-                await axios.post(`${API_BASE}/batch/${batch.id}/close`);
-                fetchBatches();
+                if(!confirm(`确定要对批次 [${getFileName(batch.okFilePath)}] 进行结单吗？\n\n注意：结单后可能(根据配置)自动清理所有临时切片、日志和差异文件以释放磁盘空间，此操作不可逆！`)) return;
+
+                try {
+                    // 1. 发送请求
+                    await axios.post(`${API_BASE}/batch/${batch.id}/close`);
+                    // 2. 成功提示 (可选)
+                    alert("结单成功，后台正在清理磁盘文件...");
+                    // 3. 刷新列表 (只有成功了才刷新)
+                    fetchBatches();
+                } catch(e) {
+                    // e.response.data 就是您后端 ResponseEntity.body("...") 里的内容
+                    const errorMsg = e.response?.data || e.message || "操作失败";
+                    // 4. 弹窗显示具体错误原因
+                    alert("无法结单: " + errorMsg);
+                }
             };
 
             const retryTranscode = async (detail) => {
                 await axios.post(`${API_BASE}/detail/${detail.id}/retry-transcode`);
-                fetchDetails();
+                try {
+                    fetchDetails();
+                } catch(e) {
+                    const errorMsg = e.response?.data || e.message || "操作失败";
+                    alert("无法结单: " + errorMsg);
+                }
             };
 
             // --- 新增：下载切片文件逻辑 ---
@@ -685,6 +717,23 @@
                 }
             };
 
+            const batchRetryFailed = async () => {
+                if (!selectedDetail.value) return;
+
+                // 简单的二次确认
+                if (!confirm(`确定要尝试批量修复该文件下的所有失败切片吗？\n这将在后台排队执行。`)) return;
+
+                try {
+                    const res = await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-load`);
+                    alert(res.data); // "已触发 20 个切片的后台重试任务"
+
+                    // 刷新一下列表
+                    loadSplits();
+                } catch (e) {
+                    alert("操作失败: " + (e.response?.data || e.message));
+                }
+            };
+
             // 【修改】打开抽屉的方法 (替换原来的 openSplits)
             const openSplits = (detail) => {
                 selectedDetail.value = detail;
@@ -749,6 +798,7 @@
             return {
                 jobs, batches, detailsData, splits,
                 reVerifySplit,downloadSplit,
+                batchRetryFailed,
                 filterErrorOnly,
                 selectedJob, selectedBatch, selectedDetail,
                 jobSearch, filteredJobs, pageConfig, loadingJobs, autoRefresh,

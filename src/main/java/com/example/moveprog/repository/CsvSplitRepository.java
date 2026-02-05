@@ -94,4 +94,10 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long>, JpaSp
             @Param("oldStatus") CsvSplitStatus oldStatus,
             @Param("newStatus") CsvSplitStatus newStatus);
 
+    @Modifying
+    @Transactional
+    @Query("UPDATE CsvSplit s SET s.status = 'WAIT_LOAD', s.errorMsg = NULL " +
+            "WHERE s.detailId = :detailId AND s.status = 'FAIL_LOAD'")
+    int resetFailedSplitsToWaitLoad(Long detailId);
+
 }

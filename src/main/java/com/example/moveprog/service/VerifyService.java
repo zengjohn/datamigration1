@@ -3,6 +3,7 @@ package com.example.moveprog.service;
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.CsvSplitStatus;
+import com.example.moveprog.enums.DetailStatus;
 import com.example.moveprog.enums.VerifyStrategy;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.service.impl.CsvRowIterator;
@@ -17,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.io.IOException;
 
 /**
@@ -35,6 +35,7 @@ public class VerifyService {
 
     private final CoreComparator coreComparator; // 注入上一轮写的比对器
     private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
+    private final MigrationArtifactManager migrationArtifactManager;
 
     // 注入 AppProperties 用于获取配置...
     private final JdbcHelper jdbcHelper;
@@ -46,10 +47,11 @@ public class VerifyService {
             return;
         }
 
+        migrationArtifactManager.cleanVerifyArtifacts(csvSplit);
         MigrationJob migrationJob = jobRepo.findById(csvSplit.getJobId()).orElseThrow();
 
         // 2. 准备迭代器
-        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(migrationJob.getOutDirectory(), csvSplit);
+        try (VerifyDiffWriter diffWriter = createVerifyDiffWriter(migrationJob, csvSplit);
              JdbcRowIterator dbIter = createDbIterator(csvSplit);
              CloseableRowIterator<String> fileIter = createFileIterator(csvSplit)) {
 
@@ -61,11 +63,7 @@ public class VerifyService {
             // 4. 【核心判断】根据差异数决定最终状态
             if (diffCount == 0) {
                 log.info("校验通过: 切片 ID={}", splitId);
-                // 校验通过，删除可能的空差异文件（如果有的话）
-                if (config.getVerify().isDeleteSplitVerifyPass()) {
-                    deleteSplitFile(csvSplit);
-                }
-                deleteEmptyVerifyResultFile(migrationJob.getId(), splitId);
+                migrationArtifactManager.deleteEmptyVerifyResultFile(csvSplit);
                 stateManager.switchSplitStatus(splitId, CsvSplitStatus.PASS, "校验通过");
             } else {
                 log.error("校验失败: 切片 ID={}，发现 {} 处差异", splitId, diffCount);
@@ -79,6 +77,14 @@ public class VerifyService {
             QianyiDetail qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
             stateManager.refreshDetailStatus(qianyiDetail.getId()); // 需在Manager加个简单查询方法，或这里先查再传
 
+            // 查询detail状态，如果是完成， 则根据配置清除文件
+            if (config.getVerify().isDeleteSplitVerifyPass()) {
+                qianyiDetail = detailRepo.findById(csvSplit.getDetailId()).orElseThrow();
+                if (DetailStatus.FINISHED.equals(qianyiDetail.getStatus())) {
+                    migrationArtifactManager.cleanQianyiDetailArtifacts(qianyiDetail);
+                }
+            }
+
         } catch (Exception e) {
             log.error("校验过程发生系统异常: {}", e.getMessage(), e);
             stateManager.switchSplitStatus(splitId, CsvSplitStatus.FAIL_VERIFY, "系统异常: " + e.getMessage());
@@ -88,8 +94,8 @@ public class VerifyService {
         }
     }
 
-    private VerifyDiffWriter createVerifyDiffWriter(String outDirectory, CsvSplit split) throws IOException {
-        String verifyResultBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory);
+    private VerifyDiffWriter createVerifyDiffWriter(MigrationJob migrationJob, CsvSplit split) throws IOException {
+        String verifyResultBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, split.getQianyiId());
         return new VerifyDiffWriter(verifyResultBasePath, split.getId(), config.getVerify().getMaxDiffCount());
     }
 
@@ -158,30 +164,6 @@ public class VerifyService {
             return new CsvRowIterator(split.getSplitFilePath(), true, csvParser,
                     CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
         }
-    }
-
-    private void deleteSplitFile(CsvSplit split) {
-        String splitFilePath = split.getSplitFilePath();
-        File splitFile = new File(splitFilePath);
-        if (splitFile.exists()) {
-            splitFile.delete();
-        }
-    }
-
-    private void deleteEmptyVerifyResultFile(Long jobId, Long splitId) {
-        String diffFilePath = getDiffFilePath(jobId, splitId);
-        File diffFile = new File(diffFilePath);
-        if (diffFile.exists() && diffFile.length() == 0) {
-            diffFile.delete();
-        }
-    }
-
-    private String getDiffFilePath(Long jobId, Long splitId) {
-        MigrationJob migrationJob = jobRepo.findById(jobId).orElseThrow();
-        String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(
-                MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob.getOutDirectory()),
-                splitId);
-        return verifyResultFile;
     }
 
 }

@@ -52,6 +52,7 @@ public class TranscodeService {
 
     private final JobControlManager jobControlManager;
     private final TargetDatabaseConnectionManager targetDatabaseConnectionManager;
+    private final MigrationArtifactManager migrationArtifactManager;
 
     // 注入 AppProperties 用于获取配置...
     private final AppProperties config;
@@ -98,37 +99,13 @@ public class TranscodeService {
         if (Objects.isNull(qianyiDetail)) {
             return;
         }
-        MigrationJob migrationJob = jobRepository.findById(qianyiDetail.getJobId()).orElseThrow();
-        String outDirectory = migrationJob.getOutDirectory();
 
-        // 同时也建议物理删除磁盘上的临时文件（如果有残留）
-        List<CsvSplit> byDetailIdAndStatuses = splitRepo.findByDetailId(detailId);
-        if (Objects.nonNull(byDetailIdAndStatuses) && !byDetailIdAndStatuses.isEmpty()) {
-            for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
-                String splitFilePath = byDetailIdAndStatus.getSplitFilePath(); // 保存的是全路径
-                try {
-                    Files.deleteIfExists(Path.of(splitFilePath));
-                } catch (Exception e){}
-
-                String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(
-                        MigrationOutputDirectorUtil.verifyResultDirectory(outDirectory),
-                        byDetailIdAndStatus.getId());
-                try {
-                    Files.deleteIfExists(Path.of(verifyResultFile));
-                } catch (Exception e){}
-            }
-
-            for (CsvSplit byDetailIdAndStatus : byDetailIdAndStatuses) {
-                try {
-                    targetDatabaseConnectionManager.deleteLoadOldData(migrationJob.getId(), byDetailIdAndStatus.getId());
-                } catch (Exception e) {
-                }
-            }
+        migrationArtifactManager.cleanTranscodeArtifacts(qianyiDetail);
+        try {
+            targetDatabaseConnectionManager.deleteSplitsAndLoadData(detailId);
+        } catch (Exception e) {
+            log.info("error on deleteDetailAndLoadData {}", detailId, e);
         }
-
-        // DELETE FROM t_csv_split WHERE detail_id = ?
-        splitRepo.deleteByDetailId(detailId);
-
     }
 
     /**
@@ -151,8 +128,8 @@ public class TranscodeService {
         Qianyi findQianyiById = qianyiRepo.findById(qianyiId).orElseThrow();
         MigrationJob migrationJob = jobRepository.findById(findQianyiById.getJobId()).orElseThrow();
         List<String> ddlFilePath = SchemaParseUtil.parseColumnNamesFromDdl(findQianyiById.getDdlFilePath());
-        String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob.getOutDirectory());
-        String transcodeSplitDirectory = MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob.getOutDirectory());
+        String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, qianyiId);
+        String transcodeSplitDirectory = MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob, qianyiId);
         Path transcodeSplitResultDirectory = MigrationOutputDirectorUtil.transcodeSplitResultDirectory(transcodeSplitDirectory, detailId);
 
         int expectedColumns = ddlFilePath.size();
@@ -253,8 +230,8 @@ public class TranscodeService {
 
                         errorCount++;
                         // 【策略 2：阈值熔断】
-                        if (errorCount > config.getTranscodeJob().getMaxErrorCount()) {
-                            throw new RuntimeException("错误行数超过阈值 (" + config.getTranscodeJob().getMaxErrorCount() + ")，判定为系统性错误，流程终止！");
+                        if (errorCount > config.getTranscode().getMaxErrorCount()) {
+                            throw new RuntimeException("错误行数超过阈值 (" + config.getTranscode().getMaxErrorCount() + ")，判定为系统性错误，流程终止！");
                         }
 
                         lineNo++;

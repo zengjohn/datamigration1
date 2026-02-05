@@ -28,13 +28,15 @@ public class AppProperties {
     private String currentNodeIp;
 
     // 1. CSV 相关配置 (对应 app.csv)
+    private Job job = new Job();
+
     // 嵌套配置类
     private Csv csv = new Csv();
 
     // 2. 性能/并发相关配置 (对应 app.performance)
     private Performance performance = new Performance();
 
-    private TranscodeJob transcodeJob = new TranscodeJob();
+    private Transcode transcode = new Transcode();
 
     private String jdbcOptions = "?Unicode=true&characterEncoding=utf8&allowLoadLocalInfile=true&useCompression=true";
 
@@ -225,12 +227,19 @@ public class AppProperties {
         private int splitRows = 500_000;
     }
 
+    @Data
+    public static class Job {
+        /**
+         * 关单时自动清除刷出文件
+         */
+        private boolean autoCleanOnClose = true;
+    }
 
     /**
      * 转码配置
      */
     @Data
-    public static class TranscodeJob {
+    public static class Transcode {
         /**
          * 最大转码错误行，超过则转码状态变成失败
          */
@@ -285,7 +294,7 @@ public class AppProperties {
         private int maxDiffCount = 1000;
 
         /**
-         * 验证通过后删除拆分文件
+         * 验证通过后删除中间输出(拆分文件等)文件
          */
         private boolean deleteSplitVerifyPass = false;
 

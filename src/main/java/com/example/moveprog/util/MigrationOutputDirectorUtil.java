@@ -1,8 +1,14 @@
 package com.example.moveprog.util;
 
+import com.example.moveprog.entity.MigrationJob;
+
 import java.io.IOException;
 import java.nio.file.*;
 
+/**
+ * 输出目录管理
+ * 为了避免目录名代码散布在各个地方，统一管理目录名
+ */
 public abstract class MigrationOutputDirectorUtil {
 
     public static void beSureNewDirectory(Path directory) {
@@ -24,13 +30,26 @@ public abstract class MigrationOutputDirectorUtil {
         }
     }
 
+
+    /**
+     * 某个批次中间文件输出目录
+     * @param migrationJob 整个job的输出目录
+     * @param qianyiId 批次(对于一个ok文件)的输出目录
+     * @return 某个批次产生的文件的根目录：输出目录(对于jobId)\迁移Id
+     */
+    public static String batchOutDirectory(MigrationJob migrationJob, Long qianyiId) {
+        String outDirectory = migrationJob.getOutDirectory();
+        return Paths.get(outDirectory, qianyiId.toString()).toString();
+    }
+
     /**
      * 转移作业 outDirectory 输出目录
-     * @param outDirectory 输出目录
+     * @param migrationJob 输出目录
+     * @param qianyiId 迁移批次(对于一个ok文件)Id
      * @return
      */
-    public static String transcodeErrorDirectory(String outDirectory) {
-        return Paths.get(outDirectory, "output_error").toString();
+    public static String transcodeErrorDirectory(MigrationJob migrationJob, Long qianyiId) {
+        return Paths.get(batchOutDirectory(migrationJob, qianyiId), "output_error").toString();
     }
 
     /**
@@ -45,11 +64,12 @@ public abstract class MigrationOutputDirectorUtil {
 
     /**
      * 转移作业 outDirectory 输出目录
-     * @param outDirectory
+     * @param migrationJob
+     * @param qianyiId 迁移批次(对于一个ok文件)Id
      * @return
      */
-    public static String transcodeSplitDirectory(String outDirectory) {
-        return Paths.get(outDirectory, "output_split").toString();
+    public static String transcodeSplitDirectory(MigrationJob migrationJob, Long qianyiId) {
+        return Paths.get(batchOutDirectory(migrationJob, qianyiId), "output_split").toString();
     }
 
     public static Path transcodeSplitResultDirectory(String transcodeSplitDirectory, Long detailId) {
@@ -73,11 +93,12 @@ public abstract class MigrationOutputDirectorUtil {
 
     /**
      * 验证结果输出目录
-     * @param outDirectory 转移作业outDirectory输出目录
+     * @param migrationJob 转移作业outDirectory输出目录
+     * @param qianyiId 迁移批次(对于一个ok文件)Id
      * @return
      */
-    public static String verifyResultDirectory(String outDirectory) {
-        return Paths.get(outDirectory, "verify_result").toString();
+    public static String verifyResultDirectory(MigrationJob migrationJob, Long qianyiId) {
+        return Paths.get(batchOutDirectory(migrationJob, qianyiId), "verify_result").toString();
     }
 
     public static String verifyResultFile(String verifyResultPath, Long splitId) {
