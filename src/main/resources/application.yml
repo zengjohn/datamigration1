@@ -85,6 +85,7 @@ app:
       null-value: ""
       quote-escape: "\""
       header-extraction: false
+      skip-rows: 1
 
     # 2. 中间文件 UTF-8 配置
     utf8-split:

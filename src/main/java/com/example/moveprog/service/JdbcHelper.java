@@ -58,7 +58,12 @@ public class JdbcHelper {
         return config.getLoadJdbc().getTableQuoteChar() + name + config.getLoadJdbc().getTableQuoteChar();
     }
 
-    public String deleteSql(Long splitId) throws IOException {
+    /**
+     * 产生删除(目标表)装载数据sql
+     * @param splitId
+     * @return
+     */
+    public String deleteSql(Long splitId) {
         CsvSplit csvSplit = csvSplitRepository.findById(splitId).orElseThrow();
         Qianyi qianyi = qianyiRepo.findById(csvSplit.getQianyiId()).orElseThrow();
         String tableName = qianyiTableName(qianyi.getId());

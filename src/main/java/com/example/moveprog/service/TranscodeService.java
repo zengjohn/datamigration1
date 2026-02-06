@@ -103,6 +103,9 @@ public class TranscodeService {
         migrationArtifactManager.cleanTranscodeArtifacts(qianyiDetail);
         try {
             targetDatabaseConnectionManager.deleteSplitsAndLoadData(detailId);
+
+            // 删除元数据表中的拆分记录 DELETE FROM csv_split WHERE detail_id = ?
+            splitRepo.deleteByDetailId(detailId);
         } catch (Exception e) {
             log.info("error on deleteDetailAndLoadData {}", detailId, e);
         }

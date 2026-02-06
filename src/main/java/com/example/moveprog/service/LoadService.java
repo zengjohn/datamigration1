@@ -138,17 +138,28 @@ public class LoadService {
         targetDatabaseConnectionManager.deleteLoadOldData(split.getId());
 
         try (Connection conn = targetDatabaseConnectionManager.getConnection(split.getJobId(), false)) {
-            executeSqlsBeforeLoad(conn);
+            // 1. 显式关闭自动提交 (防御性编程)
+            conn.setAutoCommit(false);
 
-            // 【核心判断】根据配置选择装载策略
-            if (config.getLoadJdbc().isUseLocalInfile()) {
-                // 方案 A: 极速 LOAD DATA (原有逻辑)
-                loadByLoadDataInFile(conn, split.getId());
-            } else {
-                // 方案 B: 通用 JDBC Batch Insert (新增保底)
-                loadByJdbcBatch(conn, split.getId());
+            try {
+                executeSqlsBeforeLoad(conn);
+
+                // 【核心判断】根据配置选择装载策略
+                if (config.getLoadJdbc().isUseLocalInfile()) {
+                    // 方案 A: 极速 LOAD DATA (原有逻辑)
+                    loadByLoadDataInFile(conn, split.getId());
+                } else {
+                    // 方案 B: 通用 JDBC Batch Insert (新增保底)
+                    loadByJdbcBatch(conn, split.getId());
+                }
+
+                // 2. 【必需】显式提交
+                conn.commit();
+            } catch (Exception e) {
+                // 3. 出错回滚
+                conn.rollback();
+                throw e;
             }
-            conn.commit();
         }
     }
 

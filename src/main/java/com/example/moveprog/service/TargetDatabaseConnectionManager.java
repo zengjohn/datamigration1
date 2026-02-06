@@ -41,6 +41,7 @@ public class TargetDatabaseConnectionManager {
 
     /**
      * 获取指定作业的数据库连接
+     * 注意：目标库的连接池是手工管理的， spring管理不了目标库的事务
      */
     public Connection getConnection(Long jobId, boolean readOnly) throws SQLException {
         // computeIfAbsent: 这是一个原子操作
@@ -111,6 +112,7 @@ public class TargetDatabaseConnectionManager {
 
     /**
      * 用于重新装载
+     * 注意：事务管理只适用于元数据库，目标库由于连接
      * @param splitId
      * @throws SQLException
      * @throws IOException
@@ -120,34 +122,55 @@ public class TargetDatabaseConnectionManager {
         CsvSplit csvSplit = splitRepo.findById(splitId).orElseThrow();
         MigrationJob migrationJob = jobRepo.findById(csvSplit.getJobId()).orElseThrow();
         try (Connection conn = getConnection(migrationJob.getId(), false)) {
-            String deleteSql = jdbcHelper.deleteSql(splitId);
-            executeUpdateSql(conn, deleteSql);
+            // 1. 显式关闭自动提交 (防御性编程)
+            conn.setAutoCommit(false);
+
+            try {
+                String deleteSql = jdbcHelper.deleteSql(splitId);
+                executeUpdateSql(conn, deleteSql);
+
+                // 2. 【必需】显式提交
+                conn.commit();
+            } catch (Exception e) {
+                // 3. 出错回滚
+                conn.rollback();
+                throw e;
+            }
         }
     }
 
     /**
      * 用于重新转码
+     * 注意：事务管理只适用于元数据库，目标库由于连接
      * @param detailId
      * @throws SQLException
      * @throws IOException
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void deleteSplitsAndLoadData(Long detailId) throws SQLException, IOException {
+    public void deleteSplitsAndLoadData(Long detailId) throws SQLException {
         QianyiDetail qianyiDetail = qianyiDetailRepo.findById(detailId).orElseThrow();
         MigrationJob migrationJob = jobRepo.findById(qianyiDetail.getJobId()).orElseThrow();
 
         List<CsvSplit> csvSplits = splitRepo.findByDetailId(detailId);
         if (Objects.nonNull(csvSplits) && !csvSplits.isEmpty()) {
             try (Connection conn = getConnection(migrationJob.getId(), false)) {
-                for (CsvSplit csvSplit : csvSplits) {
-                    String deleteSql = jdbcHelper.deleteSql(csvSplit.getId());
-                    executeUpdateSql(conn, deleteSql);
+                // 1. 显式关闭自动提交 (防御性编程，不管全局配置怎样，这里强制手动挡)
+                conn.setAutoCommit(false);
+                try {
+                    for (CsvSplit csvSplit : csvSplits) {
+                        // 2. 执行多条 SQL
+                        String deleteSql = jdbcHelper.deleteSql(csvSplit.getId());
+                        executeUpdateSql(conn, deleteSql);
+                    }
+                    // 3. 【必须】显式提交
+                    conn.commit();
+                } catch (Exception e) {
+                    // 4. 出错回滚
+                    conn.rollback();
+                    throw e;
                 }
             }
         }
-
-        // DELETE FROM t_csv_split WHERE detail_id = ?
-        splitRepo.deleteByDetailId(detailId);
     }
 
     public static void executeUpdateSql(Connection conn, String sql) throws SQLException {
