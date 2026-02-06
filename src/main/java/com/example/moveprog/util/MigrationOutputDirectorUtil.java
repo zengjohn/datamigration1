@@ -1,6 +1,8 @@
 package com.example.moveprog.util;
 
+import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.MigrationJob;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -9,6 +11,7 @@ import java.nio.file.*;
  * 输出目录管理
  * 为了避免目录名代码散布在各个地方，统一管理目录名
  */
+@Slf4j
 public abstract class MigrationOutputDirectorUtil {
 
     public static void beSureNewDirectory(Path directory) {
@@ -89,6 +92,26 @@ public abstract class MigrationOutputDirectorUtil {
         // 【关键】确保这个子目录存在 (虽然 Files.write 会报错，但建议工具类里或者 Service 里保证创建)
         // 为了代码纯粹性，这里只返回路径字符串。创建目录的动作交给 Service。
         return detailDir.resolve(fileIndex + ".csv").toString();
+    }
+
+    /**
+     * 如果有patch文件，返回patch文件全路径名，否则返回拆分文件全路径名
+     * @param split
+     * @return
+     */
+    public static String getActualSplitPath(CsvSplit split) {
+        String patchSplitPath = getPatchSplitPath(split);
+        if (java.nio.file.Files.exists(java.nio.file.Path.of(patchSplitPath))) {
+            log.warn(">>> 发现补丁文件，将使用补丁文件代替原始文件: {}", patchSplitPath);
+            return patchSplitPath;
+        }
+        return split.getSplitFilePath();
+    }
+
+    public static String getPatchSplitPath(CsvSplit split) {
+        String originalPath = split.getSplitFilePath();
+        String patchPath = originalPath + ".patch";
+        return patchPath;
     }
 
     /**

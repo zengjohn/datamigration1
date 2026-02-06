@@ -2,12 +2,16 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>数据迁移运维控制台 V3.0</title>
-    <link href="/assets/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/assets/css/bootstrap-icons.min.css" rel="stylesheet">
-    <script src="/assets/js/vue.global.js"></script>
-    <script src="/assets/js/axios.min.js"></script>
+    <link href="/assets/css/bootstrap.min.css?v=20260206_1015" rel="stylesheet">
+    <link href="/assets/css/bootstrap-icons.min.css?v=20260206_1015" rel="stylesheet">
+    <script src="/assets/js/vue.global.js?v=20260206_1015"></script>
+    <script src="/assets/js/axios.min.js?v=20260206_1015"></script>
 
     <style>
         :root { --sidebar-width: 280px; }
@@ -241,9 +245,14 @@
                     <i class="bi bi-search"></i>
                 </button>
                 <button class="btn btn-sm btn-danger ms-2"
-                        @click="batchRetryFailed"
+                        @click="batchRetryLoadFailed"
                         title="批量重试所有装载失败的任务">
-                    <i class="bi bi-lightning-charge-fill"></i> 批量救活
+                    <i class="bi bi-lightning-charge-fill"></i> 批量重装
+                </button>
+                <button class="btn btn-sm btn-danger ms-2"
+                        @click="batchRetryVerifyFailed"
+                        title="批量重试所有验证失败的任务">
+                    <i class="bi bi-lightning-charge-fill"></i> 批量重验
                 </button>
             </div>
 
@@ -717,7 +726,7 @@
                 }
             };
 
-            const batchRetryFailed = async () => {
+            const batchRetryLoadFailed = async () => {
                 if (!selectedDetail.value) return;
 
                 // 简单的二次确认
@@ -725,6 +734,23 @@
 
                 try {
                     const res = await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-load`);
+                    alert(res.data); // "已触发 20 个切片的后台重试任务"
+
+                    // 刷新一下列表
+                    loadSplits();
+                } catch (e) {
+                    alert("操作失败: " + (e.response?.data || e.message));
+                }
+            };
+
+            const batchRetryVerifyFailed = async () => {
+                if (!selectedDetail.value) return;
+
+                // 简单的二次确认
+                if (!confirm(`确定要尝试批量验证该文件下的所有失败切片吗？\n这将在后台排队执行。`)) return;
+
+                try {
+                    const res = await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-verify`);
                     alert(res.data); // "已触发 20 个切片的后台重试任务"
 
                     // 刷新一下列表
@@ -798,7 +824,7 @@
             return {
                 jobs, batches, detailsData, splits,
                 reVerifySplit,downloadSplit,
-                batchRetryFailed,
+                batchRetryLoadFailed, batchRetryVerifyFailed,
                 filterErrorOnly,
                 selectedJob, selectedBatch, selectedDetail,
                 jobSearch, filteredJobs, pageConfig, loadingJobs, autoRefresh,

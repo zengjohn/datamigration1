@@ -269,7 +269,19 @@ public class MigrationController {
         // 假设我们在 Repository 里定义了 updateStatusByDetailIdAndStatus
         int count = splitRepo.resetFailedSplitsToWaitLoad(detailId);
 
-        return ResponseEntity.ok("已将 " + count + " 个失败切片重置为等待状态，调度器将稍后接管执行。");
+        return ResponseEntity.ok("已将 " + count + " 个失败切片重置为等待装载状态，调度器将稍后接管执行。");
+    }
+
+    /**
+     * 批量重试：只重置状态，不执行逻辑
+     */
+    @PostMapping("/detail/{detailId}/batch-retry-verify")
+    public ResponseEntity<String> batchRetryVerify(@PathVariable Long detailId) {
+        // 使用自定义的 SQL 批量更新，性能极快
+        // 假设我们在 Repository 里定义了 updateStatusByDetailIdAndStatus
+        int count = splitRepo.resetFailedSplitsToWaitVerify(detailId);
+
+        return ResponseEntity.ok("已将 " + count + " 个失败切片重置为等待验证状态，调度器将稍后接管执行。");
     }
 
     // ===========================

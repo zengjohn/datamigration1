@@ -19,6 +19,9 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * 校验服务
@@ -108,6 +111,19 @@ public class VerifyService {
 
     // 工厂方法：根据策略创建不同的文件迭代器
     private CloseableRowIterator createFileIterator(CsvSplit split) throws Exception {
+
+        String actualSplitPath = MigrationOutputDirectorUtil.getActualSplitPath(split);
+        // 1. 优先检查是否存在补丁文件 (UTF-8)
+        if (Files.exists(Paths.get(actualSplitPath))) {
+            log.info("Split[{}] 发现补丁文件，将使用补丁文件作为比对源", split.getId());
+            AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
+            CsvParserSettings settings = utf8Split.toParserSettings();
+            CsvParser csvParser = new CsvParser(settings);
+            // 读取拆分文件 (UTF-8)：
+            return new CsvRowIterator(actualSplitPath, true, csvParser,
+                    CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
+        }
+
         VerifyStrategy strategy = config.getVerify().getStrategy();
         if (strategy == VerifyStrategy.USE_SOURCE_FILE) {
             // 策略 B: 读源文件 IBM1388 + Skip

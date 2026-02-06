@@ -6,6 +6,7 @@ import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.exception.JobStoppedException;
 import com.example.moveprog.repository.*;
 import com.example.moveprog.util.CharsetFactory;
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import com.univocity.parsers.csv.CsvParser;
 import com.univocity.parsers.csv.CsvParserSettings;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +32,6 @@ import java.util.List;
 public class LoadService {
     private final StateManager stateManager;
 
-    private final QianyiDetailRepository detailRepo;
     private final CsvSplitRepository splitRepo;
     private final QianyiRepository qianyiRepo;
 
@@ -49,7 +49,9 @@ public class LoadService {
             return;
         }
 
-        log.info("  [Load] 开始装载 Split id: {}, detailId: {}, csv: {}", splitId, csvSplit.getDetailId(), csvSplit.getSplitFilePath());
+        log.info("  [Load] 开始装载 Split id: {}, detailId: {}, csv: {}", splitId,
+                csvSplit.getDetailId(),
+                MigrationOutputDirectorUtil.getActualSplitPath(csvSplit));
 
         try {
             // 【埋点1】刚进来先查一下
@@ -174,7 +176,8 @@ public class LoadService {
         if (batchSize <= 0) batchSize = 5000;
 
         try (PreparedStatement ps = conn.prepareStatement(sql);
-             InputStreamReader reader = new InputStreamReader(new FileInputStream(csvSplit.getSplitFilePath()), charset)) {
+             InputStreamReader reader = new InputStreamReader(
+                     new FileInputStream(MigrationOutputDirectorUtil.getActualSplitPath(csvSplit)), charset)) {
             // 【关键】设置超时，防止死锁或网络丢包导致线程永久挂起
             // 建议在 application.yml 里配置 load-jdbc.query-timeout: 600
             int timeout = config.getLoadJdbc().getQueryTimeout();

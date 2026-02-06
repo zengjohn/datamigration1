@@ -5,6 +5,7 @@ import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.QianyiRepository;
+import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
@@ -22,9 +23,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class JdbcHelper {
 
-    private final AppProperties config;
     private final QianyiRepository qianyiRepo;
     private final CsvSplitRepository csvSplitRepository;
+
+    private final AppProperties config;
 
     public String checkExistsTableSql(String schema, String table) {
         StringBuilder sql = new StringBuilder();
@@ -117,7 +119,7 @@ public class JdbcHelper {
 
         String ddlFilePath = qianyi.getDdlFilePath();
 
-        String splitCsvPath = csvSplit.getSplitFilePath();
+        String splitCsvPath = MigrationOutputDirectorUtil.getActualSplitPath(csvSplit);
 
         String safePath = splitCsvPath.replace("\\", "/");
 

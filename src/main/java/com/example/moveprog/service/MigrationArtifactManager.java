@@ -74,6 +74,12 @@ public class MigrationArtifactManager {
                     if (result) {
                         log.info("已清理拆分文件: {}", splitFilePath);
                     }
+
+                    String patchFilePath = MigrationOutputDirectorUtil.getPatchSplitPath(csvSplit);
+                    result = Files.deleteIfExists(Paths.get(patchFilePath));
+                    if (result) {
+                        log.info("已清理patch文件: {}", patchFilePath);
+                    }
                 }
             }
 
