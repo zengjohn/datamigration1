@@ -97,6 +97,11 @@
                         <div class="mt-2" v-if="selectedJob?.id === job.id">
                             <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')" class="btn btn-outline-danger btn-xs w-100" style="font-size: 0.75rem;">停止作业</button>
                             <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')" class="btn btn-outline-success btn-xs w-100" style="font-size: 0.75rem;">恢复作业</button>
+                            <button class="btn btn-outline-primary btn-sm ms-1"
+                                    @click="globalVerify(job.id)"
+                                    title="总账核对">
+                                <i class="bi bi-calculator"></i> 核对
+                            </button>
                         </div>
                     </a>
                 </div>
@@ -120,7 +125,7 @@
                         <table class="table table-hover table-sm mb-0 align-middle">
                             <thead class="table-light sticky-top">
                             <tr>
-                                <th>ID</th><th>OK文件名</th><th>目标表</th><th>状态</th><th>操作</th>
+                                <th>ID</th><th>OK文件名</th><th>目标schema</th><th>目标表</th><th>状态</th><th>操作</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -133,7 +138,8 @@
                                     <div class="fw-bold">{{ getFileName(b.okFilePath) }}</div>
                                     <div class="small text-muted" style="font-size: 0.75rem;">{{ b.okFilePath }}</div>
                                 </td>
-                                <td>{{ b.tableName }}</td>
+                                <td>{{ b.targetSchema}}</td>
+                                <td>{{ b.targetTableName}}</td>
                                 <td>
                                     <span :class="getStatusClass(b.status)">{{ b.status }}</span>
                                     <div v-if="b.errorMsg" class="text-danger small mt-1 text-truncate" style="max-width: 200px;" :title="b.errorMsg">{{ b.errorMsg }}</div>
@@ -375,8 +381,16 @@
                             <input v-model="newJob.outDirectory" type="text" class="form-control" placeholder="/outdata/..." required>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small">目标数据库 JDBC URL</label>
-                            <input v-model="newJob.targetDbUrl" type="text" class="form-control form-control-sm">
+                            <label class="form-label small">目标schema</label>
+                            <input v-model="newJob.targetSchema" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标库host</label>
+                            <input v-model="newJob.targetDbHost" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标库端口</label>
+                            <input v-model="newJob.targetDbPort" type="text" class="form-control form-control-sm">
                         </div>
                         <div class="row mb-3">
                             <div class="col">
@@ -395,6 +409,85 @@
                     </form>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div v-if="showVerifyModal" class="modal fade show" style="display: block; background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-xl"> <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-speedometer2"></i> 全局一致性核对报告 (Global Reconciliation)
+                </h5>
+                <button type="button" class="btn-close" @click="showVerifyModal = false"></button>
+            </div>
+
+            <div class="modal-body">
+                <div v-if="verifyLoading" class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 text-muted">正在进行全库扫描与行数比对，请耐心等待...</p>
+                </div>
+
+                <div v-else>
+                    <div class="alert alert-info small">
+                        <i class="bi bi-info-circle-fill"></i>
+                        核对逻辑：<strong>源端行数</strong> (IBM CSV汇总) vs <strong>切片行数</strong> (UTF-8汇总) vs <strong>目标库行数</strong> (DB Count)
+                    </div>
+
+                    <table class="table table-bordered table-hover align-middle">
+                        <thead class="table-light">
+                        <tr>
+                            <th>目标表 (Schema.Table)</th>
+                            <th>状态</th>
+                            <th class="text-end">源端行数 (IBM)</th>
+                            <th class="text-end">切片行数 (UTF-8)</th>
+                            <th class="text-end">目标库行数 (DB)</th>
+                            <th class="text-end">差异 (Target - Source)</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr v-for="item in verifyResults" :key="item.tableName"
+                            :class="{'table-success': item.status === 'MATCH', 'table-danger': item.status !== 'MATCH'}">
+
+                            <td class="fw-bold">{{ item.tableName }}</td>
+
+                            <td>
+                                    <span v-if="item.status === 'MATCH'" class="badge bg-success">
+                                        <i class="bi bi-check-circle"></i> 一致
+                                    </span>
+                                <span v-else-if="item.status === 'MISMATCH_SPLIT'" class="badge bg-warning text-dark">
+                                        <i class="bi bi-exclamation-triangle"></i> 转码丢失
+                                    </span>
+                                <span v-else-if="item.status === 'MISMATCH_LOAD'" class="badge bg-danger">
+                                        <i class="bi bi-x-circle"></i> 入库丢失
+                                    </span>
+                                <span v-else class="badge bg-secondary">{{ item.status }}</span>
+                            </td>
+
+                            <td class="text-end font-monospace">{{ item.sourceRowCount?.toLocaleString() }}</td>
+                            <td class="text-end font-monospace">{{ item.splitRowCount?.toLocaleString() }}</td>
+                            <td class="text-end font-monospace">{{ item.targetRowCount?.toLocaleString() }}</td>
+
+                            <td class="text-end fw-bold"
+                                :class="{'text-danger': (item.targetRowCount - item.sourceRowCount) !== 0, 'text-success': (item.targetRowCount - item.sourceRowCount) === 0}">
+                                {{ (item.targetRowCount - item.sourceRowCount) > 0 ? '+' : '' }}{{ (item.targetRowCount - item.sourceRowCount).toLocaleString() }}
+                            </td>
+                        </tr>
+
+                        <tr v-if="verifyResults.length === 0">
+                            <td colspan="6" class="text-center text-muted py-3">暂无核对数据</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @click="showVerifyModal = false">关闭</button>
+                <button type="button" class="btn btn-primary" @click="globalVerify(currentVerifyJobId)" :disabled="verifyLoading">
+                    <i class="bi bi-arrow-repeat"></i> 重新核对
+                </button>
+            </div>
+        </div>
         </div>
     </div>
 
@@ -446,6 +539,12 @@
             let timer = null;
             // 新增一个响应式变量
             const filterErrorOnly = ref(false);
+
+            // --- 【新增】总账核对相关的响应式变量 ---
+            const showVerifyModal = ref(false);       // 控制弹窗显示
+            const verifyLoading = ref(false);         // 控制加载转圈
+            const verifyResults = ref([]);            // 存储后端返回的核对结果列表
+            const currentVerifyJobId = ref(null);     // 记录当前正在核对哪个 Job
 
             // 【新增】切片分页数据容器
             const splitPage = ref({
@@ -760,6 +859,31 @@
                 }
             };
 
+            const globalVerify = async (jobId) => {
+                if (!jobId) {
+                    alert("未获取到作业ID");
+                    return;
+                }
+
+                currentVerifyJobId.value = jobId; // 记录ID以便"重新核对"按钮使用
+                showVerifyModal.value = true;     // 打开弹窗
+                verifyLoading.value = true;       // 开始转圈
+                verifyResults.value = [];         // 清空旧数据
+
+                try {
+                    // 调用后端接口 (注意：这里用的是 POST)
+                    const res = await axios.post(`${API_BASE}/job/${jobId}/global-verify`);
+                    verifyResults.value = res.data;
+                } catch(e) {
+                    console.error(e);
+                    const errorMsg = e.response?.data || e.message || "未知错误";
+                    alert("核对请求失败: " + errorMsg);
+                    showVerifyModal.value = false; // 出错关闭弹窗
+                } finally {
+                    verifyLoading.value = false;   // 停止转圈
+                }
+            };
+
             // 【修改】打开抽屉的方法 (替换原来的 openSplits)
             const openSplits = (detail) => {
                 selectedDetail.value = detail;
@@ -843,7 +967,13 @@
 
                 getFileName, formatTime, getStatusClass,
                 fetchBatches, // export for manual refresh btn
-                viewBadFile
+                viewBadFile,
+
+                showVerifyModal,
+                verifyLoading,
+                verifyResults,
+                globalVerify,
+                currentVerifyJobId
             };
         }
     }).mount('#app');

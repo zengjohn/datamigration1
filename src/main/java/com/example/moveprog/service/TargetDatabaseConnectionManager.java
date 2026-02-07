@@ -70,7 +70,7 @@ public class TargetDatabaseConnectionManager {
         // 2. 配置 HikariCP
         HikariConfig config = new HikariConfig();
 
-        String url = migrationJob.getTargetDbUrl() + appProperties.getJdbcOptions();
+        String url = "jdbc:mysql://" + migrationJob.getTargetDbHost() + ":" + migrationJob.getTargetDbPort() + "/" + migrationJob.getTargetSchema() + appProperties.getJdbcOptions();
         String user = migrationJob.getTargetDbUser();
         String password = migrationJob.getTargetDbPass();
 

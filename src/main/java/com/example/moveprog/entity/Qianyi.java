@@ -37,15 +37,15 @@ public class Qianyi extends BaseNodeEntity {
     /**
      * 目标库名, 如果为空则库名由url决定
      */
-    @Column(nullable = true, length = 255)
-    private String schemaName;
+    @Column(nullable = false, length = 255)
+    private String targetSchema;
 
 
     /**
      * 目标端表名 （目前的设计，要求一个ok文件中所有的csv文件都装载到同一张表)
      */
     @Column(nullable = false, length = 255)
-    private String tableName;
+    private String targetTableName;
 
     /**
      * schema文件路径

@@ -40,7 +40,7 @@ public class JdbcHelper {
 
     public String qianyiTableName(Long qianyiId) {
         Qianyi qianyi = qianyiRepo.findById(qianyiId).orElseThrow();
-        return tableNameQuote(qianyi.getSchemaName(), qianyi.getTableName());
+        return tableNameQuote(qianyi.getTargetSchema(), qianyi.getTargetTableName());
     }
 
     public String columnQuote(String columnName) {

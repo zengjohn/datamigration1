@@ -38,10 +38,22 @@ public class MigrationJob {
     private String outDirectory;
 
     /**
+     * 目标数据库名
+     */
+    @Column(nullable = false, length = 255)
+    private String targetSchema;
+
+    /**
      * csv迁移到目标库的配置
      */
-    @Column(nullable = false, length = 1000)
-    private String targetDbUrl;
+    @Column(nullable = false, length = 40)
+    private String targetDbHost;
+    /**
+     * 目标库端口
+     */
+    @Column(nullable = false)
+    private int targetDbPort;
+
     @Column(nullable = false, length = 40)
     private String targetDbUser;
     @Column(length = 40)

@@ -38,6 +38,26 @@ public class QianyiDetail extends BaseNodeEntity {
     private String sourceCsvPath;
 
     /**
+     * IBM1388 源文件总行数 (在转码/扫描阶段写入)
+     */
+    @Column(name = "source_row_count")
+    private Long sourceRowCount = 0L;
+
+    /**
+     * 和qianyi冗余存储，目标库名, 如果为空则库名由url决定
+     */
+    @Column(nullable = false, length = 255)
+    private String targetSchema;
+
+
+    /**
+     * 和qianyi冗余存储，目标端表名
+     */
+    @Column(nullable = false, length = 255)
+    private String targetTableName;
+
+
+    /**
      * 状态
      */
     // 【修改这里】必须加上 @Enumerated(EnumType.STRING)

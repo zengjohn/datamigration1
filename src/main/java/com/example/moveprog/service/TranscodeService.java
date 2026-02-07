@@ -106,6 +106,9 @@ public class TranscodeService {
 
             // 删除元数据表中的拆分记录 DELETE FROM csv_split WHERE detail_id = ?
             splitRepo.deleteByDetailId(detailId);
+
+            // 清空总行数
+            detailRepo.updateSourceRowCount(detailId, 0L);
         } catch (Exception e) {
             log.info("error on deleteDetailAndLoadData {}", detailId, e);
         }
@@ -155,8 +158,8 @@ public class TranscodeService {
             parser.beginParsing(reader);
 
             String[] originalLine;
-            long lineNo = 1; // 大机行号
-            long currentLineNoFromContext;
+            long currentLineNoFromContext; // 大机csv源文件的行号(绝对行号)
+            long lineNo = 1; // 有效行号（实际读取的，不包括忽略的空行，跳过的行等)
 
             // 初始化第一个 Writer
             int fileIndex = 1;
@@ -246,7 +249,7 @@ public class TranscodeService {
                     // 懒加载创建文件
                     if (csvWriterContext == null) {
                         currentOutPath = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(transcodeSplitDirectory, detailId, fileIndex));
-                        csvWriterContext = createUtf8Writer(currentOutPath, currentLineNoFromContext);
+                        csvWriterContext = createUtf8Writer(currentOutPath, lineNo, currentLineNoFromContext);
                     }
 
                     // 2. 注入行号 (放到最后一列)
@@ -267,22 +270,26 @@ public class TranscodeService {
                     }
 
                     // 3. 切分文件
-                    if (lineNo-csvWriterContext.startLineNo >= perfConfig.getSplitRows()) {
-                        Long startLineNo = csvWriterContext.startLineNo;
+                    if (lineNo-csvWriterContext.startLine >= perfConfig.getSplitRows()) {
+                        Long startLine = csvWriterContext.startLine;
+                        Long startLineFromContext = csvWriterContext.startLineFromContext;
                         csvWriterContext.close();
                         csvWriterContext = null;
                         fileIndex++;
                         // 保存切分记录到数据库
-                        saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, lineNo-startLineNo);
+                        saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineFromContext, lineNo-startLine);
                     }
                 }
 
-                if (Objects.nonNull(csvWriterContext) && (lineNo-csvWriterContext.startLineNo > 0)) {
-                    Long startLineNo = csvWriterContext.startLineNo;
+                if (Objects.nonNull(csvWriterContext) && (lineNo-csvWriterContext.startLine > 0)) {
+                    Long startLine = csvWriterContext.startLine;
+                    Long startLineFromContext = csvWriterContext.startLineFromContext;
                     csvWriterContext.close();
                     // 保存切分记录到数据库
-                    saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineNo, lineNo-startLineNo);
+                    saveSplit(findQianyiById.getJobId(), qianyiId, detailId, currentOutPath, startLineFromContext, lineNo-startLine);
                 }
+
+                detailRepo.updateSourceRowCount(detailId, lineNo-1);
             } finally {
                 if (csvWriterContext != null) {
                     csvWriterContext.close();
@@ -290,17 +297,12 @@ public class TranscodeService {
                 if (errorWriter != null) errorWriter.close(); // 别忘了关闭错误文件流
                 // 【核心修改】无论成功失败，都更新错误行数到数据库
                 // 注意：这里需要能访问到 detail 对象，或者传入了 detailId 后重新查
-                updateErrorCount(detailId, errorCount);
+                detailRepo.updateErrorCount(detailId, errorCount);
             }
         }
     }
 
-    private void updateErrorCount(Long detailId, long count) {
-        // 为了防止覆盖并发更新的状态，最好只更新这一个字段
-        detailRepo.updateErrorCount(detailId, count);
-    }
-
-    private CsvWriterContext createUtf8Writer(Path path, Long startLineNo) throws IOException {
+    private CsvWriterContext createUtf8Writer(Path path, Long startLineNo, Long startLineFromContext) throws IOException {
         AppProperties.Performance performance = config.getPerformance();
         AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
         CsvWriterSettings settings = utf8Split.toWriterSettings();
@@ -308,23 +310,28 @@ public class TranscodeService {
         Writer out = new BufferedWriter(new OutputStreamWriter(
                 Files.newOutputStream(path), Charset.forName(utf8Split.getEncoding())),
                 performance.getWriteBufferSize()); // 加大写缓冲
-        return new CsvWriterContext(new CsvWriter(out, settings), startLineNo);
+        return new CsvWriterContext(new CsvWriter(out, settings), startLineNo, startLineFromContext);
     }
 
     private class CsvWriterContext {
         private CsvWriter csvWriter;
-        private Long startLineNo;
-        public CsvWriterContext(CsvWriter csvWriter, Long startLineNo) {
+        private Long startLine; // lineNo
+        private Long startLineFromContext; // 改拆分第一行在源ibm csv中的行号
+        public CsvWriterContext(CsvWriter csvWriter, Long startLine, Long startLineFromContext) {
             this.csvWriter = csvWriter;
-            this.startLineNo = startLineNo;
+            this.startLine = startLine;
+            this.startLineFromContext = startLineFromContext;
         }
         public void close() {
             if (null != csvWriter) {
                 csvWriter.close();
             }
         }
-        public Long getStartLineNo() {
-            return this.startLineNo;
+        public Long getStartLine() {
+            return startLine;
+        }
+        public Long getStartLineFromContext() {
+            return this.startLineFromContext;
         }
         public void write(String[] newRow) {
             this.write(newRow);

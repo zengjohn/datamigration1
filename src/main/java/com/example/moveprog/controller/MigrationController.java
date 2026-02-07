@@ -1,6 +1,7 @@
 package com.example.moveprog.controller;
 
 import com.example.moveprog.config.AppProperties;
+import com.example.moveprog.dto.GlobalVerifyResult;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -50,9 +51,11 @@ public class MigrationController {
     // 如果还没有，可以先暂时注释掉相关行，只改数据库状态
     private final JobControlManager controlManager;
     private final MigrationArtifactManager migrationArtifactManager;
+    private final JobService jobService;
+    private final GlobalVerifyService globalVerifyService;
+
     private final AppProperties config;
 
-    private final JobService jobService;
 
     // ===========================
     // Level 1: 作业管理 (Job)
@@ -65,10 +68,11 @@ public class MigrationController {
         // 简单校验
         if (job.getName() == null ||
                 job.getSourceDirectory() == null ||
-                job.getTargetDbUrl() == null ||
+                job.getTargetSchema() == null ||
+                job.getTargetDbHost() == null ||
                 job.getTargetDbUser() == null ||
                 job.getOutDirectory() == null) {
-            log.error("名称, 源目录, 输出目录, 目标库url, 目标库用户名 不能为空");
+            log.error("名称, 源目录, 输出目录, 目标schema, 目标库host, 目标库用户名 不能为空");
             return ResponseEntity.badRequest().body("名称, 源目录, 输出目录, 目标库url, 目标库用户名 不能为空");
         }
 
@@ -122,6 +126,27 @@ public class MigrationController {
             log.info("作业 [{}] 已恢复", id);
         }
         return ResponseEntity.ok(Map.of("status", job.getStatus()));
+    }
+
+    /**
+     * 【新增接口】触发全局一致性核对 (总账核对)
+     * 前端调用: axios.post(`/api/job/${jobId}/global-verify`)
+     */
+    @PostMapping("/job/{jobId}/global-verify")
+    public ResponseEntity<List<GlobalVerifyResult>> globalVerify(@PathVariable Long jobId) {
+        log.info("收到作业[{}]的全库核对请求...", jobId);
+
+        try {
+            // 1. 调用 Service 执行核对逻辑
+            List<GlobalVerifyResult> results = globalVerifyService.performGlobalVerify(jobId);
+
+            // 2. 返回结果列表给前端
+            return ResponseEntity.ok(results);
+        } catch (Exception e) {
+            log.error("全库核对失败", e);
+            // 抛出异常，前端会捕获并弹窗提示
+            throw new RuntimeException("核对执行失败: " + e.getMessage());
+        }
     }
 
     @PostMapping("/batch/{id}/close")

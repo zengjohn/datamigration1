@@ -109,6 +109,11 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     @Query("UPDATE QianyiDetail d SET d.transcodeErrorCount = :count WHERE d.id = :id")
     void updateErrorCount(Long id, Long count);
 
+    @Modifying
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Query("UPDATE QianyiDetail d SET d.sourceRowCount = :count WHERE d.id = :id")
+    void updateSourceRowCount(Long id, Long count);
+
     /**
      * 调度器专用
      * @param id
@@ -123,5 +128,19 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
             @Param("id") Long id,
             @Param("oldStatus") DetailStatus oldStatus,
             @Param("newStatus") DetailStatus newStatus);
+
+    // 【查询1】找出该 Job 下涉及的所有目标表 (库名.表名)
+    @Query("SELECT DISTINCT CONCAT(d.targetSchema, '.', d.targetTableName) " +
+            "FROM QianyiDetail d WHERE d.jobId = :jobId")
+    List<String> findDistinctTargetTables(@Param("jobId")Long jobId);
+
+    // 【查询2】统计源文件总行数
+    @Query("SELECT SUM(d.sourceRowCount) FROM QianyiDetail d " +
+            "WHERE d.jobId = :jobId " +
+            "AND d.targetSchema = :schema " +
+            "AND d.targetTableName = :tableName")
+    Long sumSourceRows(@Param("jobId") Long jobId,
+                       @Param("schema") String schema,
+                       @Param("tableName") String tableName);
 
 }

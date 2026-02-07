@@ -114,7 +114,7 @@ class VerifyServiceTest {
 
         Qianyi qianyi = new Qianyi();
         qianyi.setDdlFilePath("ddl.sql");
-        qianyi.setTableName("t_target");
+        qianyi.setTargetTableName("t_target");
         when(qianyiRepo.findById(100L)).thenReturn(Optional.of(qianyi));
 
         // Mock DDL 解析

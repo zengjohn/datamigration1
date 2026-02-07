@@ -102,7 +102,7 @@ public class DirectoryMonitor {
         qianyi.setOkFilePath(okPath);
         // 默认表名：如果 JSON 解析挂了，用文件名兜底
         String defaultTableName = okFile.getName().replace(".ok", "");
-        qianyi.setTableName(defaultTableName);
+        qianyi.setTargetTableName(defaultTableName);
         qianyi.setDdlFilePath(""); // 暂时置空
 
         try {
@@ -144,17 +144,17 @@ public class DirectoryMonitor {
             String realTableName = ddlFile.getName().replace(".sql", "");
             String[] splits = StringUtils.split(realTableName, "-");
             if (splits.length == 1) {
-                qianyi.setSchemaName(null);
-                qianyi.setTableName(splits[0]);
+                qianyi.setTargetSchema(job.getTargetSchema());
+                qianyi.setTargetTableName(splits[0]);
             } else {
-                qianyi.setSchemaName(splits[0]);
-                qianyi.setTableName(splits[1]);
+                qianyi.setTargetSchema(splits[0]);
+                qianyi.setTargetTableName(splits[1]);
             }
             if (Objects.nonNull(content.schema) && !content.schema.trim().isEmpty()) {
-                qianyi.setSchemaName(content.schema.trim());
+                qianyi.setTargetSchema(content.schema.trim());
             }
             if (Objects.nonNull(content.table) && !content.table.trim().isEmpty()) {
-                qianyi.setTableName(content.table.trim());
+                qianyi.setTargetTableName(content.table.trim());
             }
 
             qianyi.setDdlFilePath(finalDdlPath);
@@ -180,9 +180,9 @@ public class DirectoryMonitor {
             }
 
 
-            boolean exists = checkTargetTableExists(job.getId(), qianyi.getSchemaName(), qianyi.getTableName());
+            boolean exists = checkTargetTableExists(job.getId(), qianyi.getTargetSchema(), qianyi.getTargetTableName());
             if (!exists) {
-                throw new RuntimeException("目标表" + jdbcHelper.tableNameQuote(qianyi.getSchemaName(), qianyi.getTableName()) + "不存在, 前先在目标端建表");
+                throw new RuntimeException("目标表" + jdbcHelper.tableNameQuote(qianyi.getTargetSchema(), qianyi.getTargetTableName()) + "不存在, 前先在目标端建表");
             }
 
             // 4. 一切正常，保存主记录
@@ -198,6 +198,8 @@ public class DirectoryMonitor {
                 detail.setNodeId(myIp);
                 detail.setJobId(qianyi.getJobId());
                 detail.setQianyiId(qianyi.getId());
+                detail.setTargetSchema(qianyi.getTargetSchema());
+                detail.setTargetTableName(qianyi.getTargetTableName());
                 detail.setSourceCsvPath(absCsvPath);
                 detail.setStatus(DetailStatus.NEW);
                 detail.setProgress(0);

@@ -106,4 +106,17 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long>, JpaSp
             "WHERE s.detailId = :detailId AND s.status = 'FAIL_VERIFY'")
     int resetFailedSplitsToWaitVerify(Long detailId);
 
+    // 【查询3】统计拆分切片总行数
+    @Query("""
+        SELECT SUM(s.rowCount) 
+        FROM CsvSplit s 
+        JOIN QianyiDetail d ON s.detailId = d.id
+        WHERE s.jobId = :jobId
+        AND d.targetSchema = :schema
+        AND d.targetTableName = :tableName
+        """)
+    Long sumSplitRows(@Param("jobId") Long jobId,
+                      @Param("schema") String schema,
+                      @Param("tableName") String tableName);
+
 }
