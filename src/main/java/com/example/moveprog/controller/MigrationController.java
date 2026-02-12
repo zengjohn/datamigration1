@@ -502,8 +502,7 @@ public class MigrationController {
                 if (migrationJob == null) {
                     return ResponseEntity.badRequest().body("job " + split.getJobId() + " 不存在");
                 }
-                String verifyBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, split.getQianyiId());
-                Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(verifyBasePath, split.getId()));
+                Path verifyResultFile = Paths.get(MigrationOutputDirectorUtil.verifyResultFile(migrationJob, split.getQianyiId(), split.getId()));
                 if (!Files.exists(verifyResultFile)) {
                     return ResponseEntity.ok("暂无差异文件 (可能校验通过或文件已被清理)");
                 }

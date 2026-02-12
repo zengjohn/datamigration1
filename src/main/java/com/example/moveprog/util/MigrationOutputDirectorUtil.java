@@ -57,12 +57,13 @@ public abstract class MigrationOutputDirectorUtil {
 
     /**
      * 保存转码失败的文件名
-     * @param transcodeErrorDirectory 转码失败目录
+     * @param migrationJob 转码失败目录
+     * @param qianyiId
      * @param detailId 要转码的明细Id
      * @return
      */
-    public static String transcodeErrorFile(String transcodeErrorDirectory, Long detailId) {
-        return Paths.get(transcodeErrorDirectory, detailId + "_error.csv").toString();
+    public static String transcodeErrorFile(MigrationJob migrationJob, Long qianyiId, Long detailId) {
+        return Paths.get(transcodeErrorDirectory(migrationJob, qianyiId), detailId + "_error.csv").toString();
     }
 
     /**
@@ -71,24 +72,25 @@ public abstract class MigrationOutputDirectorUtil {
      * @param qianyiId 迁移批次(对于一个ok文件)Id
      * @return
      */
-    public static String transcodeSplitDirectory(MigrationJob migrationJob, Long qianyiId) {
+    private static String transcodeSplitDirectory(MigrationJob migrationJob, Long qianyiId) {
         return Paths.get(batchOutDirectory(migrationJob, qianyiId), "output_split").toString();
     }
 
-    public static Path transcodeSplitResultDirectory(String transcodeSplitDirectory, Long detailId) {
+    public static Path transcodeSplitResultDirectory(MigrationJob migrationJob, Long qianyiId, Long detailId) {
         // 1. 构造子目录路径
-        return Paths.get(transcodeSplitDirectory, String.valueOf(detailId));
+        return Paths.get(transcodeSplitDirectory(migrationJob, qianyiId), detailId.toString());
     }
 
     /**
      * 转码时生产文件名
-     * @param transcodeSplitDirectory 转码拆分目录
+     * @param migrationJob
+     * @param qianyiId
      * @param detailId 明细Id
      * @param fileIndex 拆分序号
      * @return
      */
-    public static String transcodeSplitFile(String transcodeSplitDirectory, Long detailId, int fileIndex) {
-        Path detailDir = transcodeSplitResultDirectory(transcodeSplitDirectory, detailId);
+    public static String transcodeSplitFile(MigrationJob migrationJob, Long qianyiId, Long detailId, int fileIndex) {
+        Path detailDir = transcodeSplitResultDirectory(migrationJob, qianyiId, detailId);
         // 【关键】确保这个子目录存在 (虽然 Files.write 会报错，但建议工具类里或者 Service 里保证创建)
         // 为了代码纯粹性，这里只返回路径字符串。创建目录的动作交给 Service。
         return detailDir.resolve(fileIndex + ".csv").toString();
@@ -124,7 +126,8 @@ public abstract class MigrationOutputDirectorUtil {
         return Paths.get(batchOutDirectory(migrationJob, qianyiId), "verify_result").toString();
     }
 
-    public static String verifyResultFile(String verifyResultPath, Long splitId) {
+    public static String verifyResultFile(MigrationJob migrationJob, Long qianyiId, Long splitId) {
+        String verifyResultPath = verifyResultDirectory(migrationJob, qianyiId);
         return Paths.get(verifyResultPath, "split_" + splitId + "_diff.txt").toString();
     }
 

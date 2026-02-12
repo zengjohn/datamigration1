@@ -98,8 +98,7 @@ public class VerifyService {
     }
 
     private VerifyDiffWriter createVerifyDiffWriter(MigrationJob migrationJob, CsvSplit split) throws IOException {
-        String verifyResultBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, split.getQianyiId());
-        return new VerifyDiffWriter(verifyResultBasePath, split.getId(), config.getVerify().getMaxDiffCount());
+        return new VerifyDiffWriter(migrationJob, split.getQianyiId(), split.getId(), config.getVerify().getMaxDiffCount());
     }
 
     private JdbcRowIterator createDbIterator(CsvSplit split) throws Exception {

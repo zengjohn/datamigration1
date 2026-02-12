@@ -140,7 +140,7 @@ public class TargetDatabaseConnectionManager {
     }
 
     /**
-     * 用于重新转码
+     * 删除拆分（元数据）和目标库已经装载数据, 用于重新转码
      * 注意：事务管理只适用于元数据库，目标库由于连接
      * @param detailId
      * @throws SQLException

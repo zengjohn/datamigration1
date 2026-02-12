@@ -135,8 +135,7 @@ public class TranscodeService {
         MigrationJob migrationJob = jobRepository.findById(findQianyiById.getJobId()).orElseThrow();
         List<String> ddlFilePath = SchemaParseUtil.parseColumnNamesFromDdl(findQianyiById.getDdlFilePath());
         String errorDirectory = MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, qianyiId);
-        String transcodeSplitDirectory = MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob, qianyiId);
-        Path transcodeSplitResultDirectory = MigrationOutputDirectorUtil.transcodeSplitResultDirectory(transcodeSplitDirectory, detailId);
+        Path transcodeSplitResultDirectory = MigrationOutputDirectorUtil.transcodeSplitResultDirectory(migrationJob, qianyiId, detailId);
 
         int expectedColumns = ddlFilePath.size();
 
@@ -170,7 +169,6 @@ public class TranscodeService {
 
             try {
                 // 确保输出目录存在
-                Files.createDirectories(Paths.get(transcodeSplitDirectory));
                 Files.createDirectories(Paths.get(errorDirectory));
                 Files.createDirectories(transcodeSplitResultDirectory);
 
@@ -217,7 +215,7 @@ public class TranscodeService {
                     // --- 3. 发现错误，写入错误文件 ---
                     if (errorType != null) {
                         if (errorWriter == null) {
-                            Path errorPath = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(errorDirectory, detailId));
+                            Path errorPath = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(migrationJob, qianyiId, detailId));
                             errorWriter = createErrorWriter(errorPath);
                             // 表头：包含行级Base64 和 列级JSON
                             errorWriter.writeRow(new String[]{
@@ -248,7 +246,7 @@ public class TranscodeService {
                     // --- 以下是正常的成功处理逻辑 ---
                     // 懒加载创建文件
                     if (csvWriterContext == null) {
-                        currentOutPath = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(transcodeSplitDirectory, detailId, fileIndex));
+                        currentOutPath = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(migrationJob, qianyiId, detailId, fileIndex));
                         csvWriterContext = createUtf8Writer(currentOutPath, lineNo, currentLineNoFromContext);
                     }
 

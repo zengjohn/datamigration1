@@ -147,10 +147,9 @@ class TranscodeTunnelingTest {
         Files.createDirectories(errorDir);
 
         // 3. Mock 路径生成
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitDirectory(migrationJob, any())).thenReturn(splitDir.toString());
         outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, any())).thenReturn(errorDir.toString());
         Path splitFile = splitDir.resolve("result.csv");
-        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(any(), any(), anyInt()))
+        outputUtilMock.when(() -> MigrationOutputDirectorUtil.transcodeSplitFile(migrationJob, any(), any(), anyInt()))
                       .thenReturn(splitFile.toString());
 
         // 4. Mock 实体

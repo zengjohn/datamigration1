@@ -37,8 +37,7 @@ public class MigrationArtifactManager {
             MigrationJob migrationJob = jobRepository.findById(jobId).orElseThrow();
 
             // 删除差异内容文件 (.diff)
-            String verifyBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, csvSplit.getQianyiId());
-            String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(verifyBasePath, csvSplit.getId());
+            String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(migrationJob, csvSplit.getQianyiId(), csvSplit.getId());
             boolean result = Files.deleteIfExists(Paths.get(verifyResultFile));
             if (result) {
                 log.info("已清理差异文件: {}", verifyResultFile);
@@ -48,12 +47,11 @@ public class MigrationArtifactManager {
         }
     }
 
-    public void deleteEmptyVerifyResultFile(CsvSplit csvSplit) {
+    public void deleteEmptyVerifyResultFile(CsvSplit csvSplit) throws IOException {
         Long jobId = csvSplit.getJobId();
         MigrationJob migrationJob = jobRepository.findById(jobId).orElseThrow();
 
-        String verifyBasePath = MigrationOutputDirectorUtil.verifyResultDirectory(migrationJob, csvSplit.getQianyiId());
-        String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(verifyBasePath, csvSplit.getId());
+        String verifyResultFile = MigrationOutputDirectorUtil.verifyResultFile(migrationJob, csvSplit.getQianyiId(), csvSplit.getId());
         File diffFile = new File(verifyResultFile);
         if (diffFile.exists() && diffFile.length() == 0) {
             diffFile.delete();
@@ -86,8 +84,7 @@ public class MigrationArtifactManager {
             Long jobId = detail.getJobId();
             MigrationJob migrationJob = jobRepository.findById(jobId).orElseThrow();
 
-            String errorFile = MigrationOutputDirectorUtil.transcodeErrorFile(
-                    MigrationOutputDirectorUtil.transcodeErrorDirectory(migrationJob, detail.getQianyiId()), detail.getId());
+            String errorFile = MigrationOutputDirectorUtil.transcodeErrorFile(migrationJob, detail.getQianyiId(), detail.getId());
             boolean result = Files.deleteIfExists(Paths.get(errorFile));
             if (result) {
                 log.info("已清理拆分失败文件: {}", errorFile);

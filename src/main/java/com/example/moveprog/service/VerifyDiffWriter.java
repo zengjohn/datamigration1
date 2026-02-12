@@ -1,10 +1,12 @@
 package com.example.moveprog.service;
 
+import com.example.moveprog.entity.MigrationJob;
 import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,9 +25,10 @@ public class VerifyDiffWriter implements AutoCloseable {
     private final AtomicLong diffCount = new AtomicLong(0);
     private BufferedWriter writer;
 
-    public VerifyDiffWriter(String basePath, Long splitId, int maxDiff) throws IOException {
-        Files.createDirectories(Paths.get(basePath));
-        this.filePath = MigrationOutputDirectorUtil.verifyResultFile(basePath, splitId);
+    public VerifyDiffWriter(MigrationJob migrationJob, Long qianyiId, Long splitId, int maxDiff) throws IOException {
+        this.filePath = MigrationOutputDirectorUtil.verifyResultFile(migrationJob, qianyiId, splitId);
+        File parentFile = Paths.get(filePath).toFile().getParentFile();
+        Files.createDirectories(Paths.get(parentFile.getAbsolutePath()));
         // 延迟创建文件：只有真正写入时才创建 writer，避免生成大量空文件
         this.maxDiff = maxDiff;
     }
