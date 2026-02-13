@@ -11,11 +11,11 @@ import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
-import com.example.moveprog.util.FastEscapeHandler;
 import com.example.moveprog.util.MigrationOutputDirectorUtil;
 import lombok.Builder;
 import lombok.Data;
 import lombok.ToString;
+import org.apache.commons.lang3.tuple.Pair;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +29,7 @@ import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.*;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,6 +39,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -65,18 +67,15 @@ class TranscodeServiceTest {
 
     // 静态方法的 Mock 对象
     private MockedStatic<SchemaParseUtil> schemaParseUtilMock;
-    private MockedStatic<FastEscapeHandler> fastEscapeHandlerMock;
 
     @BeforeEach
     void setUp() {
         schemaParseUtilMock = Mockito.mockStatic(SchemaParseUtil.class);
-        fastEscapeHandlerMock = Mockito.mockStatic(FastEscapeHandler.class);
     }
 
     @AfterEach
     void tearDown() {
         schemaParseUtilMock.close();
-        fastEscapeHandlerMock.close();
     }
 
     @Data
@@ -186,7 +185,7 @@ class TranscodeServiceTest {
         }
 
         for(int i=0; i < scenario.totalDataRows; i++) {
-            List<String> row = generateRowData(i + 15L);
+            List<String> row = generateRowData(i + 125L);
             rows.add(row);
             csvContent.append(row.stream().collect(Collectors.joining(",")));
             if (i < scenario.totalDataRows - 1) {
@@ -241,21 +240,15 @@ class TranscodeServiceTest {
             Integer srcCsvStartNo = scenario.getExpectedSplitStartNo().get(i);
             {
                 List<String> row = rows.get(srcCsvStartNo-1);
-                String[] splits = fileContents.get(0).split(",");
-                for (int j = 0; j < row.size(); j++) {
-                    assertEquals("\"" + row.get(j) + "\"", splits[j]);
-                }
-                assertEquals("\"" + srcCsvStartNo + "\"", splits[splits.length - 1]); // 最后一列是源文件(csv)行号
+                Pair<List<String>,Integer> pair = parseUtf8Row(fileContents.get(0));
+                assertIbm1388AndUtf8RowEquals(row, pair);
             }
 
             // 验证所有行
             for(int irow=0; irow < fileContents.size(); irow++) {
-                String[] splits = fileContents.get(0).split(",");
-                String csvLineNo = splits[splits.length - 1].replace("\"",""); // 最后一列是源文件(csv)行号
-                List<String> row = rows.get(Integer.valueOf(csvLineNo)-1);
-                for (int j = 0; j < row.size(); j++) {
-                    assertEquals("\"" + row.get(j) + "\"", splits[j]);
-                }
+                Pair<List<String>,Integer> pair = parseUtf8Row(fileContents.get(irow));
+                List<String> row = rows.get(pair.getValue()-1);
+                assertIbm1388AndUtf8RowEquals(row, pair);
             }
 
         }
@@ -278,10 +271,44 @@ class TranscodeServiceTest {
         verify(detailRepo).updateErrorCount(eq(detailId), eq(0L));
     }
 
+    /**
+     * 验证行
+     * @param actualRow 实际数据行
+     * @param utf8RowPair utf8拆分文件行
+     */
+    private void assertIbm1388AndUtf8RowEquals(List<String> actualRow, Pair<List<String>,Integer> utf8RowPair) {
+        List<String> columnValues = utf8RowPair.getKey();
+        assertEquals(columnValues.size(), actualRow.size());
+        for (int j = 0; j < actualRow.size(); j++) {
+            assertEquals(actualRow.get(j), columnValues.get(j),
+                    "列: " + j + " 期望(产生值): "+actualRow.get(j)+", 实际utf8文件值: "+columnValues.get(j));
+        }
+    }
+
+    /**
+     * 解析utf8拆分文件行
+     * @param utf8Row
+     * @return
+     */
+    private Pair<List<String>, Integer> parseUtf8Row(String utf8Row) {
+        String[] splits = utf8Row.split(",");
+        String csvLineNo = unquotedUtf8Row(splits[splits.length - 1]); // 最后一列是源文件(csv)行号
+        List<String> columns = new ArrayList<>();
+        for (int j = 0; j < splits.length-1; j++) {
+            columns.add(unquotedUtf8Row(splits[j]));
+        }
+        return Pair.of(columns, Integer.valueOf(csvLineNo));
+    }
+
+    private String unquotedUtf8Row(String row) {
+        return row.substring(1, row.length() - 1);
+    }
+
     private List<String> generateRowData(Long id) {
         List<String> rowData = new ArrayList<>();
         rowData.add(id.toString());
         rowData.add("张三_"+id);
+        rowData.add("备注xxx"+"_"+id);
         rowData.add("53.12");
         rowData.add("31215.00");
         rowData.add("1980-01-05");
@@ -290,9 +317,50 @@ class TranscodeServiceTest {
         return rowData;
     }
 
+    /**
+     * 生僻字用转义unicode
+     * @param id
+     * @return
+     */
+    private List<String> generateRowDataUsingUnicode(Long id) {
+        List<String> rowData = new ArrayList<>();
+        rowData.add(id.toString());
+        rowData.add("张\\00009F98\\\\6724\\_"+id);
+        rowData.add("备注xxx"+"_"+id);
+        rowData.add("51.12");
+        rowData.add("31111.00");
+        rowData.add("1981-01-05");
+        rowData.add("1981-01-05 13:15:16.123456");
+        rowData.add("11:15:13");
+        return rowData;
+    }
+
     @Test
     @DisplayName("源ibm1388 csv文件有错误编码")
     void testExecute_WithErrorEncode() throws IOException {
+        testExecute_WithErrorEncode(10, "\n");
+    }
+
+    @Test
+    @DisplayName("超过最大允许错误, 源ibm1388 csv文件有错误编码")
+    void testExecute_WithErrorEncodeMoreThatLimit() throws IOException {
+        testExecute_WithErrorEncode(3, "\n");
+    }
+
+    @Test
+    @DisplayName("源ibm1388 csv文件有错误编码, 换行符")
+    void testExecute_WithErrorEncode_IbmCsvLineSeparator() throws IOException {
+        testExecute_WithErrorEncode(10, "\n\n");
+    }
+
+    @Test
+    @DisplayName("超过最大允许错误, 源ibm1388 csv文件有错误编码, 换行符")
+    void testExecute_WithErrorEncodeMoreThatLimit_IbmCsvLineSeparator() throws IOException {
+        testExecute_WithErrorEncode(3, "\n\n");
+    }
+
+
+    void testExecute_WithErrorEncode(int maxErrorCount, String ibmCsvLineSeparator) throws IOException {
         // --- 1. 动态准备数据 ---
         Long jobId = 100L;
         Long qianyiId = 10L;
@@ -300,22 +368,38 @@ class TranscodeServiceTest {
 
         Path sourceFile = tempDir.resolve("source_ibm.csv");
 
-        // 写入数据行
-        int totalDataRows = 10;
-        List<Integer> errorCodeLines = List.of(2,6,8);
-        List<List<String>> rows = new ArrayList<>();
-        for(int i=0; i < totalDataRows; i++) {
-            List<String> row = generateRowData(i + 15L);
-            rows.add(row);
+        // 2. 准备编码
+        // 正常行：使用 IBM-1388 (EBCDIC编码)
+        Charset validCharset = Charset.forName("IBM-1388");
+        // 错误行：使用 UTF-8 (对于 IBM-1388 解码器来说，UTF-8 的字节序列通常是非法的)
+        Charset badCharset = StandardCharsets.UTF_8;
 
-            StringBuilder csvContent = new StringBuilder();
-            csvContent.append(row.stream().collect(Collectors.joining(",")));
-            csvContent.append("\n");
-            appendWithEncoding(sourceFile.toString(), csvContent.toString(),
-                    errorCodeLines.contains(i) ? "UTF8" : CHARSET_IBM);
+        // 写入数据行
+        int totalDataRows = 20;
+        List<Integer> errorCodeLines = List.of(4,7,9,10);
+        boolean errorMoreThatLimit = errorCodeLines.size() >= maxErrorCount;
+
+        List<List<String>> rows = new ArrayList<>();
+        try (FileOutputStream fos = new FileOutputStream(sourceFile.toString())) {
+            for (int i = 1; i <= totalDataRows; i++) {
+                List<String> row = generateRowData(i + 115L);
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                if (errorCodeLines.contains(i)) {
+                    // 【制造坏数据】
+                    // 我们写入一段包含中文的 UTF-8 字节流。
+                    // IBM-1388 解析器读到这些字节时，因为没有 Shift-Out/Shift-In 标识，
+                    // 或者字节值不符合 EBCDIC 规范，就会报错或乱码。
+                    fos.write(csvContent.toString().getBytes(badCharset));
+                } else {
+                    // 【写入正常数据】
+                    // 正常的
+                    fos.write(csvContent.toString().getBytes(validCharset));
+                }
+                fos.write(ibmCsvLineSeparator.getBytes(validCharset));
+            }
         }
-        List<String> allLines = Files.readAllLines(sourceFile);
-        assertEquals(totalDataRows, allLines.size());
 
         // 模拟输出目录结构 (outDirectory 现在来自 MigrationJob)
         Path outDir = tempDir.resolve("output_home");
@@ -341,35 +425,165 @@ class TranscodeServiceTest {
         when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
         when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
 
-        mockAppConfig("IBM1388", 2, false);
+        mockAppConfig("IBM1388", ibmCsvLineSeparator, maxErrorCount, false);
 
         schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString()))
-                .thenReturn(Collections.emptyList());
+                .thenReturn(List.of("id,name,remark,weight,salary,birth,birthday,lunchtime".split(",")));
 
         transcodeService.execute(detailId);
+
+        Path errorFile = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(job, qianyiId, detailId));
+        assertTrue(Files.exists(errorFile), "转码失败文件存在");
 
         Path expectedSplitFile = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(job, qianyiId, detailId, 1));
         assertTrue(Files.exists(expectedSplitFile), "拆分文件存在");
         List<String> fileContents = Files.readAllLines(expectedSplitFile, StandardCharsets.UTF_8);
-        assertEquals(totalDataRows-errorCodeLines.size(), fileContents.size());
+        if (!errorMoreThatLimit) {
+            assertEquals(totalDataRows - errorCodeLines.size(), fileContents.size());
+        }
 
-        for(int irow=0; irow < totalDataRows; irow++) {
-            String[] splits = fileContents.get(0).split(",");
-            String csvLineNo = splits[splits.length - 1].replace("\"",""); // 最后一列是源文件(csv)行号
-            List<String> row = rows.get(Integer.valueOf(csvLineNo)-1);
-            for (int j = 0; j < row.size(); j++) {
-                assertEquals("\"" + row.get(j) + "\"", splits[j]);
+        for(int irow=0; irow < fileContents.size(); irow++) {
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(irow));
+            List<String> row = rows.get(listIntegerPair.getValue()-1);
+            assertIbm1388AndUtf8RowEquals(row, listIntegerPair);
+        }
+
+        if (!errorMoreThatLimit) {
+            // 验证数据库保存次数 (总的 save 调用次数应该等于切片文件数)
+            verify(splitRepo).save(any(CsvSplit.class));
+            // 验证处理总状态
+            verify(stateManager).updateDetailStatus(eq(detailId), eq(DetailStatus.PROCESSING_CHILDS));
+
+            verify(detailRepo).updateSourceRowCount(eq(detailId), eq(1L*totalDataRows));
+            verify(detailRepo).updateErrorCount(eq(detailId), eq(1L*errorCodeLines.size()));
+        } else {
+            verify(stateManager).updateDetailStatus(eq(detailId), eq(DetailStatus.FAIL_TRANSCODE));
+        }
+    }
+
+    @Test
+    @DisplayName("打开tunneling开关, ibm1388不能表示的中文生僻字，用unicode转义表示")
+    void testExecute_Tunneling() throws IOException {
+        testExecute_Tunneling(true);
+    }
+
+    @Test
+    @DisplayName("关闭tunneling开关, ibm1388不能表示的中文生僻字，用unicode转义表示")
+    void testExecute_closeTunneling() throws IOException {
+        testExecute_Tunneling(false);
+    }
+
+    void testExecute_Tunneling(boolean tunneling) throws IOException {
+        // --- 1. 动态准备数据 ---
+        Long jobId = 100L;
+        Long qianyiId = 10L;
+        Long detailId = 1L;
+
+        Path sourceFile = tempDir.resolve("source_ibm.csv");
+
+        // 2. 准备编码
+        // 正常行：使用 IBM-1388 (EBCDIC编码)
+        Charset validCharset = Charset.forName("IBM-1388");
+
+        // 写入数据行
+        int totalDataRows = 3;
+        List<List<String>> rows = new ArrayList<>();
+        try (FileOutputStream fos = new FileOutputStream(sourceFile.toString())) {
+            {
+                List<String> row = generateRowData(1L);
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                fos.write(csvContent.toString().getBytes(validCharset));
+                fos.write("\n\n".getBytes(validCharset));
+            }
+
+            {
+                List<String> row = generateRowDataUsingUnicode(2L);
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                fos.write(csvContent.toString().getBytes(validCharset));
+                fos.write("\n\n".getBytes(validCharset));
+            }
+
+            {
+                List<String> row = generateRowData(3L);
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                fos.write(csvContent.toString().getBytes(validCharset));
+                fos.write("\n\n".getBytes(validCharset));
             }
         }
 
+        // 模拟输出目录结构 (outDirectory 现在来自 MigrationJob)
+        Path outDir = tempDir.resolve("output_home");
+
+        // --- 2. Mock 实体 ---
+        MigrationJob job = new MigrationJob();
+        job.setId(jobId);
+        job.setOutDirectory(outDir.toString());
+
+        Qianyi qianyi = new Qianyi();
+        qianyi.setId(qianyiId);
+        qianyi.setJobId(jobId);
+        qianyi.setDdlFilePath("schema.sql"); // 假路径
+
+        QianyiDetail detail = new QianyiDetail();
+        detail.setId(detailId);
+        detail.setQianyiId(qianyiId);
+        detail.setJobId(jobId);
+        detail.setSourceCsvPath(sourceFile.toString());
+        detail.setStatus(DetailStatus.TRANSCODING); // 初始状态
+
+        when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
+        when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+
+        mockAppConfig("IBM1388", "\n\n", 10, tunneling);
+
+        schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString()))
+                .thenReturn(List.of("id,name,remark,weight,salary,birth,birthday,lunchtime".split(",")));
+
+        transcodeService.execute(detailId);
+
         Path errorFile = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(job, qianyiId, detailId));
-        assertTrue(Files.exists(errorFile), "转码失败文件存在");
+        assertFalse(Files.exists(errorFile), "转码失败文件应该存在");
+
+        Path expectedSplitFile = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(job, qianyiId, detailId, 1));
+        assertTrue(Files.exists(expectedSplitFile), "拆分文件存在");
+        List<String> fileContents = Files.readAllLines(expectedSplitFile, StandardCharsets.UTF_8);
+        assertEquals(totalDataRows, fileContents.size());
+
+        {
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(0));
+            List<String> row = rows.get(listIntegerPair.getValue() - 1);
+            assertIbm1388AndUtf8RowEquals(row, listIntegerPair);
+        }
+
+        if (tunneling) {
+            // unicode转义
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(1));
+            assertEquals("张龘朤_2", listIntegerPair.getKey().get(1));
+        } else {
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(1));
+            List<String> row = rows.get(listIntegerPair.getValue() - 1);
+            assertIbm1388AndUtf8RowEquals(row, listIntegerPair);
+        }
+
+        {
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(2));
+            List<String> row = rows.get(listIntegerPair.getValue() - 1);
+            assertIbm1388AndUtf8RowEquals(row, listIntegerPair);
+        }
 
         // 验证数据库保存次数 (总的 save 调用次数应该等于切片文件数)
         verify(splitRepo).save(any(CsvSplit.class));
         // 验证处理总状态
         verify(stateManager).updateDetailStatus(eq(detailId), eq(DetailStatus.PROCESSING_CHILDS));
 
+        verify(detailRepo).updateSourceRowCount(eq(detailId), eq(1L * totalDataRows));
         verify(detailRepo).updateErrorCount(eq(detailId), eq(0L));
     }
 
@@ -433,7 +647,7 @@ class TranscodeServiceTest {
         detail.setSourceCsvPath(sourceFile.toString());
         detail.setStatus(DetailStatus.TRANSCODING);
 
-        mockAppConfig("IBM1388", 50, false);
+        mockAppConfig("IBM1388", "\n", 50, false);
 
         // 1. findById 必须成功，才能进入 try 块
         when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
@@ -486,11 +700,14 @@ class TranscodeServiceTest {
     }
 
     // --- 辅助：组装 AppProperties ---
-    private void mockAppConfig(String encoding, int maxErrorCount, boolean tunneling) {
+    private void mockAppConfig(
+            String ibmCsvEncoding, String ibmCsvLineSeparator, int maxErrorCount, boolean tunneling) {
         // 创建配置层级
         AppProperties.CsvDetailConfig ibmConfig = new AppProperties.CsvDetailConfig();
-        ibmConfig.setEncoding(encoding);
+        ibmConfig.setEncoding(ibmCsvEncoding);
         ibmConfig.setTunneling(tunneling);
+        ibmConfig.setLineSeparator(ibmCsvLineSeparator);
+
         // 默认 Parser 设置
         // ... (如果代码里有 toParserSettings 调用，确保 config 里的值不是 null)
 

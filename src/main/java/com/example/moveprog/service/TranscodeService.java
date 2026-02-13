@@ -380,6 +380,7 @@ public class TranscodeService {
 
     /**
      * 核心验证逻辑
+     * @param unescaped true 经过啦unescaped转换，字符和源来的字符已经不一致，跳过稳定性检测, false  unescaped 后和原来字符一致
      */
     private List<ColumnErrorDetail> validateRowStability(String[] originalLine, String[] rowToWrite, boolean[] unescaped, Charset charset, CharsetEncoder encoder, boolean isTunneling) {
         List<ColumnErrorDetail> errors = new ArrayList<>();
@@ -402,7 +403,7 @@ public class TranscodeService {
 
             // 2. 方案 B：双向回转验证
             // 修改了方法参数名，这里调用看起来更舒服
-            if (unescaped[i] && !checkCellStability(originalCell, cellToWrite, charset, encoder, isTunneling)) {
+            if (!unescaped[i] /*处理转义后不一致的情况不检查稳定性*/ && !checkCellStability(originalCell, cellToWrite, charset, encoder, isTunneling)) {
                 errors.add(buildColumnError(i, originalCell, charset, "STABILITY_MISMATCH"));
             }
         }

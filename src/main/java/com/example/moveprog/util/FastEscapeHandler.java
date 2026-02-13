@@ -17,6 +17,8 @@ public class FastEscapeHandler {
      * 1. 遇到 '\' 进入转义收集模式
      * 2. 在收集模式下遇到另一个 '\'，则结束收集，将缓冲区解析为 Hex -> Char
      * 3. 支持转义符本身的转义：即 "\\" 会被解析为 "\"
+     * @return Pair<处理结果字符是否和源字符不相同( false：一致[字符没有改变]， true：不一致[字符改变啦]), 处理结果>
+     *     返回true的情况，也就是经过啦实际的转换
      */
     public static Pair<Boolean,String> unescape(String input) {
         if (input == null) return Pair.of(false,null);
@@ -76,7 +78,7 @@ public class FastEscapeHandler {
         }
 
         String processed = out.toString();
-        return Pair.of(Objects.equals(input,processed), processed);
+        return Pair.of(!Objects.equals(input,processed), processed);
     }
 
     /**
