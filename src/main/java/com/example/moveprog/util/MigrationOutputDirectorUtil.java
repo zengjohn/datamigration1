@@ -3,6 +3,7 @@ package com.example.moveprog.util;
 import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.MigrationJob;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.IOException;
 import java.nio.file.*;
@@ -101,13 +102,13 @@ public abstract class MigrationOutputDirectorUtil {
      * @param split
      * @return
      */
-    public static String getActualSplitPath(CsvSplit split) {
+    public static Pair<String,Boolean> getActualSplitPath(CsvSplit split) {
         String patchSplitPath = getPatchSplitPath(split);
         if (java.nio.file.Files.exists(java.nio.file.Path.of(patchSplitPath))) {
             log.warn(">>> 发现补丁文件，将使用补丁文件代替原始文件: {}", patchSplitPath);
-            return patchSplitPath;
+            return Pair.of(patchSplitPath,true);
         }
-        return split.getSplitFilePath();
+        return Pair.of(split.getSplitFilePath(),false);
     }
 
     public static String getPatchSplitPath(CsvSplit split) {

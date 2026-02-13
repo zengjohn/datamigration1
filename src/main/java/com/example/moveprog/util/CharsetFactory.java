@@ -23,7 +23,7 @@ public class CharsetFactory {
             decoder.onMalformedInput(CodingErrorAction.REPLACE);
             decoder.onUnmappableCharacter(CodingErrorAction.REPLACE);
             // 替换字符通常是  (U+FFFD) 或 ?
-            decoder.replaceWith("?"); 
+            decoder.replaceWith("\uFFFD");
         }
         
         return decoder;

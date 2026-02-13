@@ -3,7 +3,6 @@ package com.example.moveprog.service;
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.entity.CsvSplit;
 import com.example.moveprog.entity.MigrationJob;
-import com.example.moveprog.entity.Qianyi;
 import com.example.moveprog.entity.QianyiDetail;
 import com.example.moveprog.enums.CsvSplitStatus;
 import com.example.moveprog.enums.VerifyStrategy;
@@ -11,7 +10,6 @@ import com.example.moveprog.repository.CsvSplitRepository;
 import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.example.moveprog.repository.QianyiRepository;
-import com.example.moveprog.util.CharsetFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,8 +21,8 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -41,14 +39,17 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class VerifyServiceTest {
+    private static final String CHARSET_IBM = "x-IBM1388";
 
     @Mock private StateManager stateManager;
     @Mock private MigrationJobRepository jobRepo;
-    @Mock private QianyiRepository qianyiRepo;
+    @Mock private QianyiRepository qianyiRepository;
     @Mock private QianyiDetailRepository detailRepo;
     @Mock private CsvSplitRepository splitRepo;
     @Mock private CoreComparator coreComparator;
     @Mock private TargetDatabaseConnectionManager targetDatabaseConnectionManager;
+    @Mock MigrationArtifactManager migrationArtifactManager;
+    @Mock JdbcHelper jdbcHelper;
     @Mock private AppProperties config;
 
     @InjectMocks
@@ -56,18 +57,15 @@ class VerifyServiceTest {
 
     @TempDir Path tempDir;
 
-    private MockedStatic<CharsetFactory> charsetFactoryMock;
     private MockedStatic<SchemaParseUtil> schemaParseUtilMock;
 
     @BeforeEach
     void setUp() {
-        charsetFactoryMock = Mockito.mockStatic(CharsetFactory.class);
         schemaParseUtilMock = Mockito.mockStatic(SchemaParseUtil.class);
     }
 
     @AfterEach
     void tearDown() {
-        charsetFactoryMock.close();
         schemaParseUtilMock.close();
     }
 
@@ -77,45 +75,42 @@ class VerifyServiceTest {
      */
     @Test
     void testExecute_SecondSplit_RowAlignment() throws Exception {
-        // 1. 准备源文件 (5行纯数据)
-        // L1: val1
-        // L2: val2
-        // L3: val3
-        // L4: val4  <-- 假设我们想测 Split 2，从第4行开始
-        // L5: val5
-        Path sourceFile = tempDir.resolve("source.csv");
-        String content = "val1\nval2\nval3\nval4\nval5";
-        Files.writeString(sourceFile, content);
+        Long splitId = 200L;
+        Long detailId = 10L;
+        Long qianyiId = 100L;
+        Long jobId = 1L;
 
         // 2. 模拟 Split 2 (StartRow=4, Count=2)
-        Long splitId = 200L;
         CsvSplit split = new CsvSplit();
         split.setId(splitId);
-        split.setJobId(1L);
-        split.setDetailId(10L);
-        split.setQianyiId(100L);
+        split.setJobId(jobId);
+        split.setQianyiId(qianyiId);
+        split.setDetailId(detailId);
         split.setStatus(CsvSplitStatus.VERIFYING);
-        split.setStartRowNo(4L); // 【关键】从第4行开始
-        split.setRowCount(2L);   // 读2行 (val3, val4)
+        split.setStartRowNo(5L); // 【关键】从第5行开始
+        split.setRowCount(3L);   // 读3行 (val5, val6, val7)
 
         // 3. Mock 依赖
         when(splitRepo.findById(splitId)).thenReturn(Optional.of(split));
-        when(jobRepo.findById(1L)).thenReturn(Optional.of(new MigrationJob()));
 
-        // 【修正点】创建一个包含 outDirectory 的 Job 对象
+        // Mock Job (VerifyService usually needs job info for paths)
         MigrationJob job = new MigrationJob();
-        job.setId(1L);
-        job.setOutDirectory(tempDir.toString()); // 设置临时目录，防止 NPE
-        when(jobRepo.findById(1L)).thenReturn(Optional.of(job));
+        job.setId(jobId);
+        job.setOutDirectory(tempDir.toString());
+        // Use lenient() because some verify strategies might not access jobRepo, preventing UnnecessaryStubbingException
+        lenient().when(jobRepo.findById(jobId)).thenReturn(Optional.of(job));
+
+        // 1. Prepare source file (7 lines)
+        Path sourceFile = tempDir.resolve("ibm1388_source.csv");
+        String content = "val1\nval2\nval3\nval4\nval5\nval6\nval7";
+        writeWithEncoding(sourceFile, content, CHARSET_IBM);
 
         QianyiDetail detail = new QianyiDetail();
+        detail.setId(detailId);
+        detail.setQianyiId(qianyiId);
+        detail.setJobId(jobId);
         detail.setSourceCsvPath(sourceFile.toString());
-        when(detailRepo.findById(10L)).thenReturn(Optional.of(detail));
-
-        Qianyi qianyi = new Qianyi();
-        qianyi.setDdlFilePath("ddl.sql");
-        qianyi.setTargetTableName("t_target");
-        when(qianyiRepo.findById(100L)).thenReturn(Optional.of(qianyi));
+        when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
 
         // Mock DDL 解析
         schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(any())).thenReturn(Collections.emptyList());
@@ -124,46 +119,43 @@ class VerifyServiceTest {
         Connection mockConn = mock(Connection.class);
         Statement mockStmt = mock(Statement.class);
         ResultSet mockRs = mock(ResultSet.class);
-
         ResultSetMetaData mockMeta = mock(ResultSetMetaData.class);
-        when(mockRs.getMetaData()).thenReturn(mockMeta);
-        when(mockMeta.getColumnCount()).thenReturn(1);
-        when(mockMeta.getColumnType(anyInt())).thenReturn(java.sql.Types.VARCHAR);
-        when(mockMeta.getColumnLabel(anyInt())).thenReturn("col_dummy");
 
-        // 【关键修改】适配您修改后的 getConnection(Long, boolean) 方法
-        // 无论是 true 还是 false，都返回 mockConn
+        // 1. Mock Connection -> Statement
         lenient().when(targetDatabaseConnectionManager.getConnection(anyLong(), anyBoolean())).thenReturn(mockConn);
-        
-        // 假设 JdbcRowIterator 构造时会创建 Statement
+        // Important: Match any generic createStatement call
         lenient().when(mockConn.createStatement(anyInt(), anyInt())).thenReturn(mockStmt);
-        lenient().when(mockStmt.executeQuery(anyString())).thenReturn(mockRs);
+        lenient().when(mockConn.createStatement()).thenReturn(mockStmt);
+
+        // 2. Mock Statement -> ResultSet
+        // This was the cause of NPE. We ensure ANY executeQuery returns our mockRs
+        lenient().when(mockStmt.executeQuery(any())).thenReturn(mockRs);
+
+        // 3. Mock ResultSet Metadata (prevent NPE in JdbcRowIterator constructor)
+        lenient().when(mockRs.getMetaData()).thenReturn(mockMeta);
+        lenient().when(mockMeta.getColumnCount()).thenReturn(1);
+        lenient().when(mockMeta.getColumnType(anyInt())).thenReturn(java.sql.Types.VARCHAR);
+        lenient().when(mockMeta.getColumnLabel(anyInt())).thenReturn("col_dummy");
 
         // Mock 配置 (使用源文件策略)
         mockAppConfig_VerifySourceFile();
 
-        // Mock Charset
-        charsetFactoryMock.when(() -> CharsetFactory.resolveCharset(any())).thenReturn(StandardCharsets.UTF_8);
-
         // 【核心】拦截 coreComparator，查看 VerifyService 传给它的 fileIterator 到底读到了什么
-        when(coreComparator.compareStreams(any(), any(), any(), any())).thenAnswer(inv -> {
+        when(coreComparator.compareStreams(anyLong(), any(), any(), any())).thenAnswer(inv -> {
             CloseableRowIterator<String> fileIter = inv.getArgument(1);
-            
-            // 读取迭代器的第一行
-            String[] row1 = null;
-            if (fileIter.hasNext()) row1 = fileIter.next();
-            
-            // 读取迭代器的第二行
-            String[] row2 = null;
-            if (fileIter.hasNext()) row2 = fileIter.next();
 
-            // --- 断言验证 ---
-            assertNotNull(row1, "Split 2 应该读到数据");
-            
-            assertEquals("val4", row1[0], "Split 2 的第一行应该是 'val4' (Line 4)");
+            // Verify Split 2 reads correctly (should start from "val4")
+            String[] row1 = fileIter.hasNext() ? fileIter.next() : null;
+            String[] row2 = fileIter.hasNext() ? fileIter.next() : null;
 
-            assertNotNull(row2, "Split 2 应该读到第二行");
-            assertEquals("val5", row2[0], "Split 2 的第二行应该是 'val5' (Line 5)");
+            assertNotNull(row1, "Should read fifth row of source");
+            assertEquals("val5", row1[0], "fourth row should be line 5 (val5)");
+            assertEquals("5", row1[1], "fourth row should be line 5 (val5)");
+
+
+            assertNotNull(row2, "Should read sixth row of source");
+            assertEquals("val6", row2[0], "sixth row should be line 6 (val6)");
+            assertEquals("6", row2[1], "sixth row should be line 6 (val6)");
 
             return 0L; // 模拟无差异
         });
@@ -178,8 +170,12 @@ class VerifyServiceTest {
         verifyConfig.setFetchSize(100);
 
         AppProperties.CsvDetailConfig ibmConfig = new AppProperties.CsvDetailConfig();
-        ibmConfig.setEncoding("UTF-8");
+        ibmConfig.setEncoding("IBM1388");
+        ibmConfig.setLineSeparator("\n");
+        ibmConfig.setDelimiter(',');
         ibmConfig.setTunneling(false);
+        ibmConfig.setHeaderExtraction(false);
+        ibmConfig.setSkipRows(0L);
 
         AppProperties.Csv csv = new AppProperties.Csv();
         csv.setIbmSource(ibmConfig);
@@ -187,4 +183,12 @@ class VerifyServiceTest {
         lenient().when(config.getVerify()).thenReturn(verifyConfig);
         lenient().when(config.getCsv()).thenReturn(csv);
     }
+
+    private static void writeWithEncoding(Path path, String content, String encoding) throws IOException {
+        try (BufferedWriter writer = new BufferedWriter(
+                new OutputStreamWriter(new FileOutputStream(path.toFile()), encoding))) {
+            writer.write(content);
+        }
+    }
+
 }

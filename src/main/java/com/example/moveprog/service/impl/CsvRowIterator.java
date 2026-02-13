@@ -1,6 +1,7 @@
 package com.example.moveprog.service.impl;
 
 import com.example.moveprog.service.CloseableRowIterator;
+import com.example.moveprog.util.CharsetFactory;
 import com.univocity.parsers.csv.CsvParser;
 import lombok.extern.slf4j.Slf4j;
 

@@ -3,8 +3,10 @@ package com.example.moveprog.service.impl;
 import com.example.moveprog.service.CloseableRowIterator;
 import com.example.moveprog.service.TargetDatabaseConnectionManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.Assert;
 
 import java.sql.*;
+import java.util.Objects;
 
 @Slf4j
 public class JdbcRowIterator implements CloseableRowIterator {
@@ -37,7 +39,8 @@ public class JdbcRowIterator implements CloseableRowIterator {
         }
 
         this.rs = ps.executeQuery(sql);
-        ResultSetMetaData meta = rs.getMetaData();
+        Assert.isTrue(Objects.nonNull(this.rs), "executeQuery("+sql+")返回的rs不能为空");
+        ResultSetMetaData meta = this.rs.getMetaData();
         int colCount = meta.getColumnCount();
         this.columnTypes = new int[colCount];
         this.columnNames = new String[colCount];

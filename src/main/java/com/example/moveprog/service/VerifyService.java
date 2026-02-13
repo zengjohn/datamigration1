@@ -111,15 +111,15 @@ public class VerifyService {
     // 工厂方法：根据策略创建不同的文件迭代器
     private CloseableRowIterator createFileIterator(CsvSplit split) throws Exception {
 
-        String actualSplitPath = MigrationOutputDirectorUtil.getActualSplitPath(split);
+        Pair<String,Boolean> actualSplitPath = MigrationOutputDirectorUtil.getActualSplitPath(split);
         // 1. 优先检查是否存在补丁文件 (UTF-8)
-        if (Files.exists(Paths.get(actualSplitPath))) {
+        if (actualSplitPath.getValue().booleanValue()) {
             log.info("Split[{}] 发现补丁文件，将使用补丁文件作为比对源", split.getId());
             AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
             CsvParserSettings settings = utf8Split.toParserSettings();
             CsvParser csvParser = new CsvParser(settings);
             // 读取拆分文件 (UTF-8)：
-            return new CsvRowIterator(actualSplitPath, true, csvParser,
+            return new CsvRowIterator(actualSplitPath.getKey(), true, csvParser,
                     CharsetFactory.resolveCharset(utf8Split.getEncoding()), split.getStartRowNo());
         }
 

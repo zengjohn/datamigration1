@@ -25,7 +25,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.*;
@@ -39,8 +42,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -326,7 +327,7 @@ class TranscodeServiceTest {
         List<String> rowData = new ArrayList<>();
         rowData.add(id.toString());
         rowData.add("张\\00009F98\\\\6724\\_"+id);
-        rowData.add("备注xxx"+"_"+id);
+        rowData.add("备注xxxC:\\Windows\\"+"_"+id);
         rowData.add("51.12");
         rowData.add("31111.00");
         rowData.add("1981-01-05");
@@ -462,6 +463,79 @@ class TranscodeServiceTest {
     }
 
     @Test
+    @DisplayName("源ibm1388 csv含有不合法字符被替换成\uFFFD")
+    void testExecute_WithErrorEncode_1() throws IOException {
+        Long jobId = 100L;
+        Long qianyiId = 10L;
+        Long detailId = 1L;
+
+        Path sourceFile = tempDir.resolve("source_ibm.csv");
+        Charset validCharset = Charset.forName("IBM-1388");
+        try (FileOutputStream fos = new FileOutputStream(sourceFile.toString())) {
+            {
+                fos.write("1,".getBytes(validCharset));
+                fos.write("张三_1".getBytes(validCharset)); fos.write(",".getBytes(validCharset));
+                fos.write("备注xxx".getBytes(validCharset)); fos.write("\n".getBytes(validCharset));
+            }
+            {
+                fos.write("2,".getBytes(validCharset));
+                // 0x0E (Shift-Out)：切换到双字节模式 (DBCS)。
+                // 0x0F (Shift-In)：切换回单字节模式 (SBCS)。
+                fos.write(new byte[]{(byte)0x0E, 0x45, 0x00, (byte)0x0F}); fos.write(",".getBytes(validCharset));
+                fos.write("备注xxx".getBytes(validCharset));
+            }
+        }
+
+        // 模拟输出目录结构 (outDirectory 现在来自 MigrationJob)
+        Path outDir = tempDir.resolve("output_home");
+
+        // --- 2. Mock 实体 ---
+        MigrationJob job = new MigrationJob();
+        job.setId(jobId);
+        job.setOutDirectory(outDir.toString());
+
+        Qianyi qianyi = new Qianyi();
+        qianyi.setId(qianyiId);
+        qianyi.setJobId(jobId);
+        qianyi.setDdlFilePath("schema.sql"); // 假路径
+
+        QianyiDetail detail = new QianyiDetail();
+        detail.setId(detailId);
+        detail.setQianyiId(qianyiId);
+        detail.setJobId(jobId);
+        detail.setSourceCsvPath(sourceFile.toString());
+        detail.setStatus(DetailStatus.TRANSCODING); // 初始状态
+
+        when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
+        when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+
+        mockAppConfig("IBM1388", "\n", 100, false);
+
+        schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString()))
+                .thenReturn(List.of("id,name,remark".split(",")));
+
+        transcodeService.execute(detailId);
+
+        Path errorFile = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(job, qianyiId, detailId));
+        assertTrue(Files.exists(errorFile), "转码失败文件存在");
+        List<String> errorFileContents = Files.readAllLines(errorFile, StandardCharsets.UTF_8);
+        assertEquals(2, errorFileContents.size());
+        assertTrue(errorFileContents.get(1).contains("\"[{\"\"columnIndex\"\":1,\"\"errorReason\"\":\"\"CONTAINS_REPLACEMENT_CHAR\"\""));
+
+        Path expectedSplitFile = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(job, qianyiId, detailId, 1));
+        assertTrue(Files.exists(expectedSplitFile), "拆分文件存在");
+        List<String> fileContents = Files.readAllLines(expectedSplitFile, StandardCharsets.UTF_8);
+        assertEquals(1, fileContents.size());
+
+        verify(splitRepo).save(any(CsvSplit.class));
+        verify(stateManager).updateDetailStatus(eq(detailId), eq(DetailStatus.PROCESSING_CHILDS));
+
+        verify(detailRepo).updateSourceRowCount(eq(detailId), eq(2L));
+        verify(detailRepo).updateErrorCount(eq(detailId), eq(1L));
+    }
+
+    @Test
     @DisplayName("打开tunneling开关, ibm1388不能表示的中文生僻字，用unicode转义表示")
     void testExecute_Tunneling() throws IOException {
         testExecute_Tunneling(true);
@@ -565,7 +639,14 @@ class TranscodeServiceTest {
         if (tunneling) {
             // unicode转义
             Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(1));
-            assertEquals("张龘朤_2", listIntegerPair.getKey().get(1));
+            List<String> row = rows.get(listIntegerPair.getValue() - 1);
+            for(int j=0; j<row.size(); j++) {
+                if (j==1) {
+                    assertEquals("张龘朤_2", listIntegerPair.getKey().get(1)); // name
+                } else {
+                    assertEquals(row.get(j), listIntegerPair.getKey().get(j));
+                }
+            }
         } else {
             Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(1));
             List<String> row = rows.get(listIntegerPair.getValue() - 1);
@@ -739,14 +820,6 @@ class TranscodeServiceTest {
             writer.write(content);
             System.out.println("生成成功: " + path);
             System.out.println("文件大小: " + file.length() + " 字节");
-        }
-    }
-
-    private static void appendWithEncoding(String path, String content, String encoding) throws IOException {
-        File file = new File(path);
-        try (BufferedWriter writer = new BufferedWriter(
-                new OutputStreamWriter(new FileOutputStream(file, true), encoding))) {
-            writer.write(content);
         }
     }
 

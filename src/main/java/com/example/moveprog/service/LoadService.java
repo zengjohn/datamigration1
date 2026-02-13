@@ -188,7 +188,7 @@ public class LoadService {
 
         try (PreparedStatement ps = conn.prepareStatement(sql);
              InputStreamReader reader = new InputStreamReader(
-                     new FileInputStream(MigrationOutputDirectorUtil.getActualSplitPath(csvSplit)), charset)) {
+                     new FileInputStream(MigrationOutputDirectorUtil.getActualSplitPath(csvSplit).getKey()), charset)) {
             // 【关键】设置超时，防止死锁或网络丢包导致线程永久挂起
             // 建议在 application.yml 里配置 load-jdbc.query-timeout: 600
             int timeout = config.getLoadJdbc().getQueryTimeout();

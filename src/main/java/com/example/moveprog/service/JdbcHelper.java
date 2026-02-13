@@ -124,9 +124,9 @@ public class JdbcHelper {
 
         String ddlFilePath = qianyi.getDdlFilePath();
 
-        String splitCsvPath = MigrationOutputDirectorUtil.getActualSplitPath(csvSplit);
+        Pair<String, Boolean> actualSplitPath = MigrationOutputDirectorUtil.getActualSplitPath(csvSplit);
 
-        String safePath = splitCsvPath.replace("\\", "/");
+        String safePath = actualSplitPath.getKey().replace("\\", "/");
 
         AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
 
