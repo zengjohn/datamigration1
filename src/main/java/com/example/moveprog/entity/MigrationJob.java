@@ -54,7 +54,7 @@ public class MigrationJob {
     @Column(nullable = false)
     private int targetDbPort;
 
-    @Column
+    @Column(nullable = true)
     private String targetUrl;
 
     @Column(nullable = false, length = 40)
