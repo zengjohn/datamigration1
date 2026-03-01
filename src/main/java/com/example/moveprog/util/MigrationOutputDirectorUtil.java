@@ -16,6 +16,9 @@ import java.nio.file.*;
 public abstract class MigrationOutputDirectorUtil {
 
     public static void beSureNewDirectory(Path directory) {
+        // 【新增】安全检查：禁止使用根目录或极其危险的路径
+        validateSafePath(directory);
+
         if (Files.isDirectory(directory)) {
             try {
                 if (!isEmptyDirectory(directory)) {
@@ -34,7 +37,36 @@ public abstract class MigrationOutputDirectorUtil {
         }
     }
 
+    /**
+     * 【新增】核心安全校验方法
+     * 防止路径遍历和危险目录操作
+     */
+    private static void validateSafePath(Path path) {
+        if (path == null) throw new RuntimeException("路径不能为空");
 
+        Path absPath = path.toAbsolutePath().normalize();
+
+        // 1. 禁止根目录 (Linux / or Windows C:\)
+        if (absPath.getParent() == null) {
+            throw new RuntimeException("禁止使用根目录作为输出目录: " + absPath);
+        }
+
+        // 2. 简单的黑名单 (根据实际部署环境调整)
+        String pathStr = absPath.toString();
+        if (pathStr.startsWith("/etc") ||
+                pathStr.startsWith("/usr") ||
+                pathStr.startsWith("/var") ||
+                pathStr.startsWith("/bin") ||
+                pathStr.startsWith("/sbin")) {
+            throw new RuntimeException("禁止使用系统关键目录: " + absPath);
+        }
+
+        // Windows 系统保护
+        if (pathStr.toLowerCase().contains(":\\windows") || pathStr.toLowerCase().contains(":\\program files")) {
+            throw new RuntimeException("禁止使用系统关键目录: " + absPath);
+        }
+    }
+    
     /**
      * 某个批次中间文件输出目录
      * @param migrationJob 整个job的输出目录

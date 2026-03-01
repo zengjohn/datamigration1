@@ -16,6 +16,7 @@ import org.springframework.util.FileSystemUtils;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.Objects;
@@ -129,14 +130,28 @@ public class MigrationArtifactManager {
         }
 
         log.info("开始执行批次[{}]的终极清理...", qianyiId);
-        String batchOutDirectory = MigrationOutputDirectorUtil.batchOutDirectory(migrationJob, qianyiId);
+        String batchOutDirStr = MigrationOutputDirectorUtil.batchOutDirectory(migrationJob, qianyiId);
+        Path batchOutPath = Paths.get(batchOutDirStr).toAbsolutePath().normalize();
+        // 【新增】防御性检查：再次确认要删除的目录是否安全
+        // 确保它确实包含 qianyiId，防止 MigrationOutputDirectorUtil 逻辑变更导致删错父目录
+        if (!batchOutPath.endsWith(qianyiId.toString())) {
+            log.error("安全阻断：试图删除的目录名[{}]与批次ID[{}]不匹配，放弃操作。", batchOutPath, qianyiId);
+            return;
+        }
+
+        // 确保路径深度足够 (例如至少 /data/output/101，path count >= 2)
+        if (batchOutPath.getNameCount() < 2) {
+            log.error("安全阻断：试图删除的目录[{}]层级过浅，放弃操作。", batchOutPath);
+            return;
+        }
+
         try {
-            boolean result = FileSystemUtils.deleteRecursively(Paths.get(batchOutDirectory));
+            boolean result = FileSystemUtils.deleteRecursively(batchOutPath);
             if (result){
-            log.info("批次[{}] 物理文件清理完成, 目录 {} 被删除", qianyiId, batchOutDirectory);
+            log.info("批次[{}] 物理文件清理完成, 目录 {} 被删除", qianyiId, batchOutPath);
             }
         } catch (IOException e) {
-            // ignore
+            log.error("清理批次文件失败", e);
         }
     }
 

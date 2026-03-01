@@ -16,18 +16,27 @@ public class SchemaParseUtil {
      */
     public static List<String> parseColumnNamesFromDdl(String ddlPath) throws IOException {
         List<String> columns = new ArrayList<>();
-        // 使用简单的 BufferedReader 读取，因为格式很简单
         try (BufferedReader br = Files.newBufferedReader(Paths.get(ddlPath), StandardCharsets.UTF_8)) {
             String line;
             while ((line = br.readLine()) != null) {
                 line = line.trim();
-                if (line.isEmpty()) continue;
+                if (line.isEmpty() || line.startsWith("#") || line.startsWith("--")) continue; // 跳过注释
 
-                // 按逗号分割，取第一列
-                // 注意：如果列名本身包含逗号，这里需要更复杂的解析，但通常数据库列名不会有逗号
+                // 优化：同时支持逗号分隔和空格分隔
+                // 1. 尝试按逗号分割 (CSV格式)
                 String[] parts = line.split(",");
+
+                // 2. 如果没有逗号，尝试按空格/Tab分割 (SQL格式: COL_NAME VARCHAR(10))
+                if (parts.length == 1) {
+                    parts = line.split("\\s+");
+                }
+
                 if (parts.length >= 1) {
-                    columns.add(parts[0].trim());
+                    // 去除可能存在的引号或反引号
+                    String colName = parts[0].trim().replaceAll("^[\"`']+|[\"`']$", "");
+                    if (!colName.isEmpty()) {
+                        columns.add(colName);
+                    }
                 }
             }
         }
