@@ -53,8 +53,6 @@ public class AppProperties {
     @Data
     public static class ExecutorGroup {
         private ExecutorConfig transcode = new ExecutorConfig();
-        private ExecutorConfig load = new ExecutorConfig();
-        private ExecutorConfig verify = new ExecutorConfig();
     }
 
     @Data

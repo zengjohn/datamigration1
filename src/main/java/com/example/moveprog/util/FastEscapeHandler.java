@@ -30,6 +30,7 @@ public class FastEscapeHandler {
         StringBuilder out = new StringBuilder(input.length());
         StringBuilder hexBuffer = new StringBuilder(16); // 用于暂存 Hex 码
         int state = STATE_NORMAL;
+        boolean hasUnicodeConversion = false; // 【新增】标记是否发生了实质性的Unicode转换
 
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
@@ -49,11 +50,14 @@ public class FastEscapeHandler {
                         if (hexBuffer.length() == 0) {
                             // 缓冲区为空，说明是 "\\" -> 转义成了 "\"
                             out.append('\\');
+                            // 注意：这里没有将 hasUnicodeConversion 设为 true
+                            // 因为 \\ -> \ 只是普通字符转义，不是 Unicode 还原
                         } else {
                             // 缓冲区有值，尝试解析 Hex
                             try {
                                 int codePoint = Integer.parseInt(hexBuffer.toString(), 16);
                                 out.append(Character.toChars(codePoint));
+                                hasUnicodeConversion = true; // 【核心】只有这里才标记为 true
                             } catch (NumberFormatException e) {
                                 // 容错：如果里边不是 Hex，说明不是合法转义，原样还原
                                 // 比如原本是 "C:\Windows\"，被误判了
@@ -77,8 +81,11 @@ public class FastEscapeHandler {
             out.append('\\').append(hexBuffer);
         }
 
-        String processed = out.toString();
-        return Pair.of(!Objects.equals(input,processed), processed);
+        if (!hasUnicodeConversion) {
+            return Pair.of(false, input);
+        }
+
+        return Pair.of(true, out.toString());
     }
 
     /**

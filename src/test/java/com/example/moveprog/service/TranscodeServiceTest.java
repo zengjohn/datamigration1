@@ -292,17 +292,79 @@ class TranscodeServiceTest {
      * @return Pair<数据行，在源文件中第...行>
      */
     private Pair<List<String>, Integer> parseUtf8Row(String utf8Row) {
-        String[] splits = utf8Row.split(",");
-        String csvLineNo = unquotedUtf8Row(splits[splits.length - 1]); // 最后一列是源文件(csv)行号
+        List<String> splits = parseCsvLine( utf8Row );
+        String csvLineNo = splits.get(splits.size()-1);
         List<String> columns = new ArrayList<>();
-        for (int j = 0; j < splits.length-1; j++) {
-            columns.add(unquotedUtf8Row(splits[j]));
+        for (int j = 0; j < splits.size()-1; j++) {
+            columns.add(splits.get(j));
         }
         return Pair.of(columns, Integer.valueOf(csvLineNo));
     }
 
+    /**
+     * 解析CSV单行字符串（双引号包裹字段，双引号转义为""）
+     * @param csvLine CSV格式的字符串
+     * @return 解析后的不可变字段列表 List.of(...)
+     */
+    public static List<String> parseCsvLine(String csvLine) {
+        // 空值校验
+        if (csvLine == null || csvLine.isBlank()) {
+            return List.of();
+        }
+
+        List<String> result = new ArrayList<>();
+        StringBuilder currentField = new StringBuilder();
+        // 状态标记：是否处于双引号包裹的字段内部
+        boolean inQuotes = false;
+
+        char[] chars = csvLine.toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            char c = chars[i];
+
+            if (c == '"') {
+                // 情况1：当前不在引号内 → 进入字段内部
+                if (!inQuotes) {
+                    inQuotes = true;
+                }
+                // 情况2：当前在引号内，判断下一个字符是否也是双引号（转义）
+                else {
+                    // 下一个字符是双引号 → 转义为一个双引号，加入字段
+                    if (i + 1 < chars.length && chars[i + 1] == '"') {
+                        currentField.append('"');
+                        i++; // 跳过下一个双引号
+                    }
+                    // 下一个字符不是双引号 → 退出字段内部
+                    else {
+                        inQuotes = false;
+                    }
+                }
+            }
+            // 仅【引号外】的逗号是字段分隔符
+            else if (c == ',' && !inQuotes) {
+                // 结束当前字段，加入结果集
+                result.add(currentField.toString());
+                currentField.setLength(0); // 重置字段缓冲区
+            }
+            // 普通字符：直接加入当前字段
+            else {
+                currentField.append(c);
+            }
+        }
+
+        // 遍历结束，添加最后一个字段
+        result.add(currentField.toString());
+        // 返回不可变列表（匹配 List.of() 要求）
+        return List.copyOf(result);
+    }
+
     private String unquotedUtf8Row(String row) {
-        return row.substring(1, row.length() - 1);
+        if (row.startsWith("\"")) {
+            row = row.substring(1, row.length());
+        }
+        if (row.endsWith("\"")) {
+            row = row.substring(0, row.length() - 1);
+        }
+        return row;
     }
 
     private List<String> generateRowData(Long id) {
@@ -633,6 +695,95 @@ class TranscodeServiceTest {
 
         verify(detailRepo).updateSourceRowCount(eq(detailId), eq(2L));
         verify(detailRepo).updateErrorCount(eq(detailId), eq(1L));
+    }
+
+    @Test
+    @DisplayName("打开tunneling开关, backslash")
+    void testExecute_Tunneling_backslash() throws IOException {
+        Long jobId = 100L;
+        Long qianyiId = 10L;
+        Long detailId = 1L;
+
+        Path sourceFile = tempDir.resolve("source_ibm.csv");
+
+        // 2. 准备编码
+        // 正常行：使用 IBM-1388 (EBCDIC编码)
+        Charset validCharset = Charset.forName("IBM-1388");
+
+        // 写入数据行
+        int totalDataRows = 1;
+        List<List<String>> rows = new ArrayList<>();
+        try (FileOutputStream fos = new FileOutputStream(sourceFile.toString())) {
+            {
+                List<String> row = List.of("备注xxxC:\\\\Windows\\_12");
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                fos.write(csvContent.toString().getBytes(validCharset));
+                fos.write("\n\n".getBytes(validCharset));
+            }
+            /*{
+                List<String> row = List.of("张\\00009F98\\\\6724\\_21", "张C:\\Windows\\_22");
+                rows.add(row);
+                StringBuilder csvContent = new StringBuilder();
+                csvContent.append(row.stream().collect(Collectors.joining(",")));
+                fos.write(csvContent.toString().getBytes(validCharset));
+                fos.write("\n\n".getBytes(validCharset));
+            }*/
+        }
+
+        // 模拟输出目录结构 (outDirectory 现在来自 MigrationJob)
+        Path outDir = tempDir.resolve("output_home");
+
+        // --- 2. Mock 实体 ---
+        MigrationJob job = new MigrationJob();
+        job.setId(jobId);
+        job.setOutDirectory(outDir.toString());
+
+        Qianyi qianyi = new Qianyi();
+        qianyi.setId(qianyiId);
+        qianyi.setJobId(jobId);
+        qianyi.setDdlFilePath("schema.sql"); // 假路径
+
+        QianyiDetail detail = new QianyiDetail();
+        detail.setId(detailId);
+        detail.setQianyiId(qianyiId);
+        detail.setJobId(jobId);
+        detail.setSourceCsvPath(sourceFile.toString());
+        detail.setStatus(DetailStatus.TRANSCODING); // 初始状态
+
+        when(detailRepo.findById(detailId)).thenReturn(Optional.of(detail));
+        when(qianyiRepo.findById(qianyiId)).thenReturn(Optional.of(qianyi));
+        when(jobRepository.findById(jobId)).thenReturn(Optional.of(job));
+
+        mockAppConfig("IBM1388", "\n\n", 100, 10, true);
+
+        schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(anyString()))
+                .thenReturn(List.of("remark1".split(",")));
+
+        transcodeService.execute(detailId);
+
+        Path errorFile = Paths.get(MigrationOutputDirectorUtil.transcodeErrorFile(job, qianyiId, detailId));
+        assertFalse(Files.exists(errorFile), "转码失败文件应该存在");
+
+        Path expectedSplitFile = Paths.get(MigrationOutputDirectorUtil.transcodeSplitFile(job, qianyiId, detailId, 1));
+        assertTrue(Files.exists(expectedSplitFile), "拆分文件存在");
+        List<String> fileContents = Files.readAllLines(expectedSplitFile, StandardCharsets.UTF_8);
+        assertEquals(totalDataRows, fileContents.size());
+
+        {
+            Pair<List<String>, Integer> listIntegerPair = parseUtf8Row(fileContents.get(0));
+            List<String> row = rows.get(listIntegerPair.getValue() - 1);
+            assertIbm1388AndUtf8RowEquals(row, listIntegerPair);
+        }
+
+        // 验证数据库保存次数 (总的 save 调用次数应该等于切片文件数)
+        verify(splitRepo).save(any(CsvSplit.class));
+        // 验证处理总状态
+        verify(stateManager).updateDetailStatus(eq(detailId), eq(DetailStatus.PROCESSING_CHILDS));
+
+        verify(detailRepo).updateSourceRowCount(eq(detailId), eq(1L * totalDataRows));
+        verify(detailRepo).updateErrorCount(eq(detailId), eq(0L));
     }
 
     @Test

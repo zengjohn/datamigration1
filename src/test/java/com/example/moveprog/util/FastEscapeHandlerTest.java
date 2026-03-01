@@ -41,4 +41,50 @@ public class FastEscapeHandlerTest {
         assertEquals("正常字符没有转义\\转义", unescape.getRight());
     }
 
+    @Test
+    @DisplayName("反斜杠")
+    void unescape_backslash() {
+        String original = "C:\\Windows\\_1";
+        Pair<Boolean, String> unescape = FastEscapeHandler.unescape(original);
+        assertFalse(unescape.getLeft());
+        assertEquals(original, unescape.getRight());
+    }
+
+    @Test
+    @DisplayName("2个反斜杠")
+    void unescape_doublebackslash() {
+        String original = "C:\\\\Windows\\_1";
+        Pair<Boolean, String> unescape = FastEscapeHandler.unescape(original);
+        assertFalse(unescape.getLeft());
+        assertEquals(original, unescape.getRight());
+    }
+
+
+    @Test
+    @DisplayName("Bug修复验证：反斜杠的稳定性检查")
+    void escapeForCheck_backslash() {
+        // 模拟一个总是返回 true 的 Encoder (模拟 IBM1388 支持反斜杠)
+        // 使用 US_ASCII，它支持反斜杠
+        java.nio.charset.CharsetEncoder encoder = java.nio.charset.StandardCharsets.US_ASCII.newEncoder();
+
+        // 场景：原始串包含反斜杠（如 Windows 路径）
+        String original = "C:\\Windows\\System32";
+
+        // 1. 编码
+        // 修复前：因为 encoder 支持 \，所以原样返回 "C:\Windows\System32"
+        // 修复后：应该强制转义为 "C:\\Windows\\System32"
+        String escaped = FastEscapeHandler.escapeForCheck(original, encoder);
+
+        System.out.println("Original: " + original);
+        System.out.println("Escaped : " + escaped);
+
+        // 2. 解码 (模拟 checkCellStability 的过程)
+        // unescape 会把 \\ 变成 \
+        Pair<Boolean, String> result = FastEscapeHandler.unescape(escaped);
+
+        // 3. 验证是否还原
+        // 如果修复前，unescape("C:\Windows\System32") 会把 \W 和 \S 试图当做转义处理，导致还原失败
+        assertEquals(original, result.getRight(), "反斜杠经过 escape -> unescape 后应该保持原样");
+    }
+
 }

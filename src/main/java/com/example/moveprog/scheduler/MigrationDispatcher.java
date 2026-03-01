@@ -22,12 +22,15 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
@@ -58,15 +61,18 @@ public class MigrationDispatcher {
     }
 
     // 2. 装载专用线程池
+    // 2. 装载专用线程池 (IO密集型，升级为虚拟线程)
     @Bean("loadExecutor")
     public Executor loadExecutor() {
-        return buildExecutor(appProperties.getExecutor().getLoad(), "Load-");
+        // Java 21 虚拟线程：为每个任务创建一个新的轻量级线程
+        // 不再受限于 coreSize/maxSize，并发度主要受限于数据库连接池大小
+        return Executors.newVirtualThreadPerTaskExecutor();
     }
 
-    // 3. 验证专用线程池
+    // 3. 验证专用线程池 (IO密集型，升级为虚拟线程)
     @Bean("verifyExecutor")
     public Executor verifyExecutor() {
-        return buildExecutor(appProperties.getExecutor().getVerify(), "Verify-");
+        return Executors.newVirtualThreadPerTaskExecutor();
     }
 
     // 通用构建方法
@@ -149,11 +155,15 @@ public class MigrationDispatcher {
             int rows = detailRepo.updateStatus(d.getId(), DetailStatus.NEW, DetailStatus.TRANSCODING);
 
             if (rows > 0) {
-                // 3. 异步提交给线程池处理实际业务
-                // 注意：这里不要直接在这里跑耗时逻辑，否则数据库连接会一直被事务占用
-                // 应该把 task.getId() 丢给线程池
-                transcodeExecutor.execute(() -> {
-                    transcodeService.execute(d.getId());
+                // 3. 【修复】注册事务同步回调，确保事务提交后再触发异步任务
+                // 防止 Worker 线程启动太快，事务还没提交，导致 Worker 读到旧状态而退出
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        transcodeExecutor.execute(() -> {
+                            transcodeService.execute(d.getId());
+                        });
+                    }
                 });
             }
         }
@@ -177,12 +187,18 @@ public class MigrationDispatcher {
             if (rows > 0) {
                 // 更新成功，内存加锁
                 inFlightSplits.add(s.getId());
-                // 异步提交
-                loadExecutor.execute(() -> {
-                    try {
-                        loadService.execute(s.getId());
-                    } finally {
-                        inFlightSplits.remove(s.getId());
+
+                // 3. 【修复】同样使用事务同步
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        loadExecutor.execute(() -> {
+                            try {
+                                loadService.execute(s.getId());
+                            } finally {
+                                inFlightSplits.remove(s.getId());
+                            }
+                        });
                     }
                 });
             }
@@ -201,11 +217,18 @@ public class MigrationDispatcher {
             int rows = splitRepo.updateStatus(s.getId(), CsvSplitStatus.WAIT_VERIFY, CsvSplitStatus.VERIFYING);
             if (rows > 0) {
                 inFlightSplits.add(s.getId());
-                verifyExecutor.execute(() -> {
-                    try {
-                        verifyService.execute(s.getId());
-                    } finally {
-                        inFlightSplits.remove(s.getId());
+
+                // 3. 【修复】同样使用事务同步
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        verifyExecutor.execute(() -> {
+                            try {
+                                verifyService.execute(s.getId());
+                            } finally {
+                                inFlightSplits.remove(s.getId());
+                            }
+                        });
                     }
                 });
             }

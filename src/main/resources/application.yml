@@ -117,24 +117,6 @@ app:
       # 队列稍微大点，作为缓冲
       queue-capacity: 500
 
-    # --- 装载 (IO/网络 密集型) ---
-    load:
-      # 瓶颈在网络 RTT 和 TDSQL 写入速度。
-      # 需要较多线程来填满网络等待时间。
-      # 设定为 50，留出余量给 Verify。
-      core-size: 50
-      max-size: 50
-      queue-capacity: 200
-
-    # --- 验证 (IO/网络 密集型) ---
-    verify:
-      # 验证是 SELECT Count/Sum，速度通常比 Insert 快。
-      # 给 20 个并发足够追平 50 个 Load 的产生速度。
-      core-size: 20
-      max-size: 20
-      queue-capacity: 200
-
-
   # ==========================================
   # 3. 目标库连接池模板 (Target DB)
   # ==========================================
