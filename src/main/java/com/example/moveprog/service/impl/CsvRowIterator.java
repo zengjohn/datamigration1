@@ -12,8 +12,8 @@ import java.util.Arrays;
 
 @Slf4j
 public class CsvRowIterator implements CloseableRowIterator {
-    private final InputStreamReader reader;
-    private final CsvParser parser;
+    private InputStreamReader reader;
+    private CsvParser parser;
     private String[] nextRow;
     private final String filePath;
     private final boolean splitCsvFile; // 拆分的csv文件(utf8编码) true， 原始的IBM1388 CSV文件 false
@@ -29,13 +29,23 @@ public class CsvRowIterator implements CloseableRowIterator {
         this.filePath = filePath;
         this.splitCsvFile = splitCsvFile;
         this.rowNumberOffset = rowNumberOffset;
-        if (log.isDebugEnabled()) {
-            log.debug("filePath: {}, rowNumberOffset: {}", filePath, rowNumberOffset);
+
+        boolean success = false;
+        try {
+            if (log.isDebugEnabled()) {
+                log.debug("filePath: {}, rowNumberOffset: {}", filePath, rowNumberOffset);
+            }
+            this.reader = new InputStreamReader(new FileInputStream(filePath), charset);
+            this.parser = parser;
+            this.parser.beginParsing(reader);
+            this.nextRow = parser.parseNext(); // 预读
+
+            success = true;
+        } finally {
+            if (!success) {
+                close();
+            }
         }
-        this.reader = new InputStreamReader(new FileInputStream(filePath), charset);
-        this.parser = parser;
-        this.parser.beginParsing(reader);
-        this.nextRow = parser.parseNext(); // 预读
     }
 
     @Override

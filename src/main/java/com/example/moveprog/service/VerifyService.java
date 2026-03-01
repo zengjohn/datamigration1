@@ -160,7 +160,14 @@ public class VerifyService {
                     String[] processedRow = new String[row.length];
                     for (int i = 0; i < row.length; i++) {
                         Pair<Boolean, String> unescape = FastEscapeHandler.unescape(row[i]);
-                        processedRow[i] = unescape.getRight();
+                        // 【优化】显式判断：只有发生了实质性的 Unicode 转义才使用处理后的值
+                        // 虽然目前 unescape 在 false 时返回原串，但这样写更能抵抗未来 unescape 的实现变更
+                        // 同时也与 TranscodeService 的逻辑（非 unescape 则 checkStability）精神一致
+                        if (unescape.getLeft()) {
+                            processedRow[i] = unescape.getRight();
+                        } else {
+                            processedRow[i] = row[i];
+                        }
                     }
                     return processedRow;
                 }

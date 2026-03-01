@@ -81,7 +81,19 @@ public class TargetDatabaseConnectionManager {
 
         // 【自动补全性能参数】
         if (!url.contains("rewriteBatchedStatements")) {
-            url += (url.contains("?") ? "&" : "?") + "rewriteBatchedStatements=true";
+            if (url.indexOf('?') == -1) {
+                // 没有问号，直接加 ?key=value
+                url += "?rewriteBatchedStatements=true";
+            } else {
+                // 有问号
+                if (url.endsWith("?") || url.endsWith("&")) {
+                    // 结尾已经是分隔符，直接加
+                    url += "rewriteBatchedStatements=true";
+                } else {
+                    // 结尾是参数值，加 &key=value
+                    url += "&rewriteBatchedStatements=true";
+                }
+            }
         }
         config.setJdbcUrl(url);
         config.setUsername(user);

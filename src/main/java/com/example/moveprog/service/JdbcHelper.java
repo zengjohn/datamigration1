@@ -32,9 +32,10 @@ public class JdbcHelper {
         StringBuilder sql = new StringBuilder();
         sql.append("select count(*) from information_schema.tables where ");
         if (schema != null && !schema.isEmpty()) {
-            sql.append("TABLE_SCHEMA='").append(schema).append("'").append(" AND ") ;
+            // 【安全修复】使用 escapeStringLiteral 转义
+            sql.append("TABLE_SCHEMA='").append(escapeStringLiteral(schema)).append("'").append(" AND ") ;
         }
-        sql.append("TABLE_NAME='").append(table).append("'") ;
+        sql.append("TABLE_NAME='").append(escapeStringLiteral(table)).append("'") ;
         return sql.toString();
     }
 
@@ -44,7 +45,9 @@ public class JdbcHelper {
     }
 
     public String columnQuote(String columnName) {
-        return config.getLoadJdbc().getColumnQuoteChar() + columnName + config.getLoadJdbc().getColumnQuoteChar();
+        // 【安全修复】使用 escapeIdentifier
+        //return config.getLoadJdbc().getColumnQuoteChar() + columnName + config.getLoadJdbc().getColumnQuoteChar();
+        return escapeIdentifier(columnName, config.getLoadJdbc().getColumnQuoteChar());
     }
 
     public String tableNameQuote(String schema, String table) {
@@ -55,7 +58,30 @@ public class JdbcHelper {
     }
 
     private String quoteSchemaOrTable(String name) {
-        return config.getLoadJdbc().getTableQuoteChar() + name + config.getLoadJdbc().getTableQuoteChar();
+        return escapeIdentifier(name, config.getLoadJdbc().getTableQuoteChar());
+    }
+
+    /**
+     * 【新增】防御性标识符转义：将标识符包裹在引号中，并转义内部的引号
+     * 例如：quoteChar=` name=user`table -> `user``table`
+     */
+    private String escapeIdentifier(String identifier, String quoteChar) {
+        if (identifier == null) return "";
+        if (quoteChar == null || quoteChar.isEmpty()) return identifier; // 无引号模式
+
+        // 核心逻辑：将 identifier 中的 quoteChar 替换为 双份
+        return quoteChar + identifier.replace(quoteChar, quoteChar + quoteChar) + quoteChar;
+    }
+
+    /**
+     * 【新增】防御性字符串字面量转义：防止 ' OR '1'='1 注入
+     * 适用于 SQL 中 'value' 的场景
+     */
+    private String escapeStringLiteral(String input) {
+        if (input == null) return "";
+        // 标准 SQL 转义：将 ' 替换为 ''
+        // 同时转义反斜杠 (MySQL默认行为)
+        return input.replace("\\", "\\\\").replace("'", "''");
     }
 
     /**
@@ -127,6 +153,8 @@ public class JdbcHelper {
         Pair<String, Boolean> actualSplitPath = MigrationOutputDirectorUtil.getActualSplitPath(csvSplit);
 
         String safePath = actualSplitPath.getKey().replace("\\", "/");
+        // 【安全修复】对路径进行转义
+        safePath = escapeStringLiteral(safePath);
 
         AppProperties.CsvDetailConfig utf8Split = config.getCsv().getUtf8Split();
 
@@ -134,9 +162,11 @@ public class JdbcHelper {
         sb.append("LOAD DATA LOCAL INFILE '").append(safePath).append("' ");
         sb.append("INTO TABLE ").append(queroTableName).append(" ");
         sb.append("CHARACTER SET utf8mb4 ");
-        sb.append("FIELDS TERMINATED BY '").append(utf8Split.getDelimiter()).append("' ");
-        sb.append("OPTIONALLY ENCLOSED BY '").append(utf8Split.getQuote()).append("' ");
-        sb.append("LINES TERMINATED BY '").append(utf8Split.getLineSeparator()).append("' ");
+
+        // 【安全修复】转义 CSV 格式选项
+        sb.append("FIELDS TERMINATED BY '").append(escapeStringLiteral(String.valueOf(utf8Split.getDelimiter()))).append("' ");
+        sb.append("OPTIONALLY ENCLOSED BY '").append(escapeStringLiteral(String.valueOf(utf8Split.getQuote()))).append("' ");
+        sb.append("LINES TERMINATED BY '").append(escapeStringLiteral(utf8Split.getLineSeparator())).append("' ");
 
         // --- 关键部分：列映射 ---
         // CSV 文件的结构是: [DDL列1, DDL列2, ... DDL列N, 行号]
