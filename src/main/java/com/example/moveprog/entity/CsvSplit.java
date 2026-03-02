@@ -17,7 +17,9 @@ import java.time.LocalDateTime;
         @Index(name = "idx_job_id", columnList = "job_id"),
         @Index(name = "idx_qianyi_id", columnList = "qianyi_id"),
         @Index(name = "idx_detail_id", columnList = "detail_id"), // 加速 findByDetailId
-        @Index(name = "idx_status_node", columnList = "status, node_id")       // 加速状态过滤
+        @Index(name = "idx_status_node", columnList = "status, node_id"),       // 加速状态过滤
+        // 【新增】用于 Dashboard 快速统计：查某个Job下各种状态的数量
+        @Index(name = "idx_job_status", columnList = "job_id, status")
 })
 public class CsvSplit extends BaseNodeEntity {
     @Id

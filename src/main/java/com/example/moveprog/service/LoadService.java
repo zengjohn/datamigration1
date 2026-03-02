@@ -219,6 +219,10 @@ public class LoadService {
 
                 ps.addBatch();
 
+                if ((count+1) % 1000 == 0) {
+                    jobControlManager.checkJobState(csvSplit.getJobId()); // 发现停止则抛异常
+                }
+
                 if (++count % batchSize == 0) {
                     ps.executeBatch();
                     ps.clearBatch();

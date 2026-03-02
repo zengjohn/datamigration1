@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -28,10 +29,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.*;
 
 @Configuration
 @EnableScheduling
@@ -51,26 +49,62 @@ public class MigrationDispatcher {
     // 注入 AppProperties 用于获取配置...
     private final AppProperties appProperties;
 
+    /**
+     * Self-injection to solve AOP self-invocation issue.
+     * Uses @Lazy to avoid circular dependency during bean initialization.
+     */
+    @Autowired
+    @Lazy
+    private MigrationDispatcher self;
+
     // 内存防抖 Set (防止重复提交到队列)
     private Set<Long> inFlightSplits = ConcurrentHashMap.newKeySet();
 
-    // 1. 转码专用线程池
+    // --- 信号量限流 (保护数据库连接池, 不再 final，改为在构造后初始化) ---
+    private Semaphore loadSemaphore;
+    // 校验任务通常比较慢，并发太高容易把数据库读IO打满，设置保守一些
+    private Semaphore verifySemaphore;
+
+
+    // 使用 @PostConstruct 初始化信号量
+    @jakarta.annotation.PostConstruct
+    public void initSemaphores() {
+        int maxPoolSize = appProperties.getTargetDbConfig().getMaxPoolSize();
+
+        // 1. 计算 Load 并发度
+        int configLoad = appProperties.getExecutor().getLoadConcurrency();
+        int finalLoad = (configLoad > 0) ? configLoad : (int)(maxPoolSize * 0.6); // 默认占 60% 连接
+        // 保底至少 1 个
+        this.loadSemaphore = new Semaphore(Math.max(1, finalLoad));
+
+        // 2. 计算 Verify 并发度
+        int configVerify = appProperties.getExecutor().getVerifyConcurrency();
+        int finalVerify = (configVerify > 0) ? configVerify : (int)(maxPoolSize * 0.3); // 默认占 30% 连接
+        this.verifySemaphore = new Semaphore(Math.max(1, finalVerify));
+
+        log.info("虚拟线程并发限制初始化: Load={}, Verify={} (连接池大小={})",
+                this.loadSemaphore.availablePermits(),
+                this.verifySemaphore.availablePermits(),
+                maxPoolSize);
+    }
+
+    // 1. 转码专用线程池 (CPU密集型，保持使用传统线程池)
     @Bean("transcodeExecutor")
     public Executor transcodeExecutor() {
+        // CPU 密集型任务，线程数由配置文件控制，不宜过大
         return buildExecutor(appProperties.getExecutor().getTranscode(), "Transcode-");
     }
 
-    // 2. 装载专用线程池
     // 2. 装载专用线程池 (IO密集型，升级为虚拟线程)
     @Bean("loadExecutor")
     public Executor loadExecutor() {
         // Java 21 虚拟线程：为每个任务创建一个新的轻量级线程
-        // 不再受限于 coreSize/maxSize，并发度主要受限于数据库连接池大小
         return Executors.newVirtualThreadPerTaskExecutor();
     }
 
     // 3. 验证专用线程池 (IO密集型，升级为虚拟线程)
     @Bean("verifyExecutor")
+    // Java 21 虚拟线程
     public Executor verifyExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
     }
@@ -111,9 +145,10 @@ public class MigrationDispatcher {
         }
 
         // 只有当有活动作业时，才去执行繁重的任务抢占逻辑
-        dispatchTranscode(myIp);
-        dispatchLoad(myIp);
-        dispatchVerify(myIp);
+        // Modify to use 'self' to trigger Transactional proxy
+        self.dispatchTranscode(myIp);
+        self.dispatchLoad(myIp);
+        self.dispatchVerify(myIp);
     }
 
     /**
@@ -176,10 +211,24 @@ public class MigrationDispatcher {
      */
     @Transactional // 必须开启事务
     public void dispatchLoad(String myIp) {
+        // 0. 快速检查：如果信号量已满，直接跳过数据库查询，减轻 DB 压力
+        if (loadSemaphore.availablePermits() <= 0) {
+            log.trace("Load 线程池已满，跳过本次调度");
+            return;
+        }
+
         // 注意：这里可以一次取更多，因为装载通常比转码快
+        // 但不要超过剩余的信号量许可数，避免取出后因为抢不到锁而空跑
+        // 这里简单处理，还是取 Top20，依靠后续 tryAcquire 控制
         List<CsvSplit> splits = splitRepo.findAndLockTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_LOAD.toString(), myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue; // 防抖
+
+            // 1. 尝试获取信号量许可
+            if (!loadSemaphore.tryAcquire()) {
+                // 如果拿不到许可，说明并发已满，停止后续调度，等待下次轮询
+                break;
+            }
 
             // 2. 【核心修改】直接调用 Repo 更新，不走 StateManager
             // 这里的逻辑极快，纯 DB 操作，完全在一个事务内
@@ -197,10 +246,15 @@ public class MigrationDispatcher {
                                 loadService.execute(s.getId());
                             } finally {
                                 inFlightSplits.remove(s.getId());
+                                // 【关键】任务结束释放信号量
+                                loadSemaphore.release();
                             }
                         });
                     }
                 });
+            } else {
+                // 更新数据库失败（可能被别人抢了），立即释放刚才拿到的信号量
+                loadSemaphore.release();
             }
 
         }
@@ -209,10 +263,18 @@ public class MigrationDispatcher {
     // --- 阶段 3: 调度校验 (针对 Split) ---
     @Transactional // 必须开启事务
     public void dispatchVerify(String myIp) {
+        if (verifySemaphore.availablePermits() <= 0) {
+            return;
+        }
+
         // SELECT * FROM t_split WHERE status = 'WAIT_VERIFY' LIMIT 20
         List<CsvSplit> splits = splitRepo.findAndLockTop20ByStatusAndNodeId(CsvSplitStatus.WAIT_VERIFY.toString(), myIp);
         for (CsvSplit s : splits) {
             if (inFlightSplits.contains(s.getId())) continue;
+
+            if (!verifySemaphore.tryAcquire()) {
+                break;
+            }
 
             int rows = splitRepo.updateStatus(s.getId(), CsvSplitStatus.WAIT_VERIFY, CsvSplitStatus.VERIFYING);
             if (rows > 0) {
@@ -227,10 +289,14 @@ public class MigrationDispatcher {
                                 verifyService.execute(s.getId());
                             } finally {
                                 inFlightSplits.remove(s.getId());
+                                // 【关键】释放信号量
+                                verifySemaphore.release();
                             }
                         });
                     }
                 });
+            } else {
+                verifySemaphore.release();
             }
         }
     }

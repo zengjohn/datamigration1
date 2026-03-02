@@ -2,6 +2,7 @@ package com.example.moveprog.controller;
 
 import com.example.moveprog.config.AppProperties;
 import com.example.moveprog.dto.GlobalVerifyResult;
+import com.example.moveprog.dto.JobDashboardDto;
 import com.example.moveprog.entity.*;
 import com.example.moveprog.enums.BatchStatus;
 import com.example.moveprog.enums.CsvSplitStatus;
@@ -21,10 +22,12 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -520,6 +523,86 @@ public class MigrationController {
                 return ResponseEntity.badRequest().body("读取失败: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * 【运维核心】获取作业的仪表盘数据
+     */
+    @GetMapping("/job/{jobId}/dashboard")
+    public ResponseEntity<JobDashboardDto> getJobDashboard(@PathVariable Long jobId) {
+        JobDashboardDto dto = new JobDashboardDto();
+        dto.setJobId(jobId);
+
+        // 1. 统计各状态数量 (建议在 Repository 写个 countByJobIdGroupByStatus 的 SQL)
+        // 这里演示逻辑：
+        // List<Object[]> counts = splitRepo.countStatusByJobId(jobId);
+        // Map<String, Long> statusMap = counts.stream().collect(...);
+        // dto.setStatusCounts(statusMap);
+
+        // 2. 简单的 Mock 数据 (请替换为真实 Service 调用)
+        // 实际开发中，你应该在 JobService 里实现 calculateDashboard(jobId)
+        // 比如: total = count(all), load_ok = count(WAIT_VERIFY + PASS + FAIL_VERIFY)
+
+        return ResponseEntity.ok(dto);
+    }
+
+    /**
+     * 【运维核心】下载切片文件 (用于本地分析坏数据)
+     */
+    @GetMapping("/split/{splitId}/download")
+    public ResponseEntity<Resource> downloadSplitFile(@PathVariable Long splitId) {
+        CsvSplit split = splitRepo.findById(splitId).orElseThrow();
+        // 优先下载实际路径（可能是转码后的，也可能是补丁文件）
+        // 这里假设 splitFilePath 存储的是绝对路径
+        Path path = Paths.get(split.getSplitFilePath());
+
+        if (!Files.exists(path)) {
+            return ResponseEntity.notFound().build();
+        }
+
+        FileSystemResource resource = new FileSystemResource(path);
+        String filename = path.getFileName().toString();
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(resource);
+    }
+
+    /**
+     * 【运维核心】智能诊断 (预览前 100 行日志)
+     */
+    @GetMapping("/split/{splitId}/diagnosis-preview")
+    public ResponseEntity<String> getDiagnosisPreview(@PathVariable Long splitId) {
+        CsvSplit split = splitRepo.findById(splitId).orElseThrow();
+
+        Path fileToRead = null;
+        String headerMsg = "";
+
+        /*if (split.getStatus() == CsvSplitStatus.FAIL_VERIFY) {
+            // 尝试读取差异文件
+            fileToRead = migrationArtifactManager.getVerifyDiffPath(split);
+            headerMsg = "=== 校验差异报告 (Verify Diff) ===\n";
+        } else if (split.getStatus() == CsvSplitStatus.FAIL_TRANSCODE) {
+            // 尝试读取转码错误日志 (如果有的话，或者直接显示 message)
+            headerMsg = "=== 转码错误日志 ===\n";
+        } else if (split.getStatus() == CsvSplitStatus.FAIL_LOAD) {
+            headerMsg = "=== 装载失败信息 (DB Error) ===\n";
+            // 装载失败通常没有文件，只有数据库里的 message
+            return ResponseEntity.ok(headerMsg + split.getMessage());
+        }*/
+
+        if (fileToRead != null && Files.exists(fileToRead)) {
+            try {
+                List<String> lines = Files.readAllLines(fileToRead).stream().limit(100).collect(Collectors.toList());
+                return ResponseEntity.ok(headerMsg + String.join("\n", lines));
+            } catch (IOException e) {
+                return ResponseEntity.internalServerError().body("读取文件失败: " + e.getMessage());
+            }
+        }
+
+        // 保底：返回数据库存储的错误信息
+        return ResponseEntity.ok(headerMsg + (split.getErrorMsg() != null ? split.getErrorMsg() : "暂无详细日志文件"));
     }
 
 }

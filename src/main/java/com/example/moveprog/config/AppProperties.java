@@ -53,6 +53,10 @@ public class AppProperties {
     @Data
     public static class ExecutorGroup {
         private ExecutorConfig transcode = new ExecutorConfig();
+        // 【新增】并发限制配置 (配合虚拟线程使用)
+        // 默认值 -1 表示自动根据连接池计算
+        private int loadConcurrency = -1;
+        private int verifyConcurrency = -1;
     }
 
     @Data

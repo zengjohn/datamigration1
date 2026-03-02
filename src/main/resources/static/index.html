@@ -57,6 +57,16 @@
             border-radius: 4px; font-family: 'Consolas', monospace;
             white-space: pre-wrap; font-size: 0.85rem; max-height: 60vh; overflow: auto;
         }
+
+        /* 新增 Dashboard 样式 */
+        .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+        .stat-card { background: white; border-radius: 8px; padding: 1rem; border: 1px solid #e9ecef; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .stat-value { font-size: 1.5rem; font-weight: bold; color: #2c3e50; }
+        .stat-label { font-size: 0.85rem; color: #6c757d; }
+
+        /* 进度条增强 */
+        .progress-stacked { display: flex; height: 8px; overflow: hidden; background-color: #e9ecef; border-radius: 4px; margin-top: 5px;}
+        .progress-segment { height: 100%; transition: width 0.6s ease; }
     </style>
 </head>
 <body>
@@ -111,12 +121,62 @@
         <div class="workspace">
 
             <div v-if="!selectedJob" class="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
-                <i class="bi bi-arrow-left-circle display-4 mb-3"></i>
+                <i class="bi bi-hdd-network display-1 mb-3 text-light-emphasis"></i>
                 <h5>请从左侧选择一个迁移作业</h5>
+                <p class="small">查看进度、监控状态或执行核对</p>
             </div>
 
             <template v-else>
-                <div class="card flex-shrink-0" style="max-height: 45%;">
+                <!-- 1. 新增：Dashboard 区域 -->
+                <div class="dashboard-grid">
+                    <div class="stat-card border-start border-4 border-primary">
+                        <div class="d-flex justify-content-between">
+                            <span class="stat-label">总进度 (批次)</span>
+                            <i class="bi bi-pie-chart text-primary"></i>
+                        </div>
+                        <div class="stat-value mt-2">
+                            {{ batches.filter(b => b.status === 'FINISHED').length }} / {{ batches.length }}
+                        </div>
+                        <div class="progress mt-2" style="height: 4px;">
+                            <div class="progress-bar" :style="{width: (batches.length ? (batches.filter(b => b.status === 'FINISHED').length/batches.length*100) : 0) + '%'}"></div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card border-start border-4 border-danger">
+                        <div class="d-flex justify-content-between">
+                            <span class="stat-label">异常切片 (需干预)</span>
+                            <i class="bi bi-exclamation-octagon text-danger"></i>
+                        </div>
+                        <!-- 这里的数据应该来自 dashboard api，暂时用 mock 或 computed -->
+                        <div class="stat-value mt-2 text-danger">
+                            {{ dashboardData?.statusCounts?.['FAIL_LOAD'] || 0 }}
+                        </div>
+                        <div class="small text-muted mt-1">装载失败</div>
+                    </div>
+
+                    <div class="stat-card border-start border-4 border-warning">
+                        <div class="d-flex justify-content-between">
+                            <span class="stat-label">校验不符</span>
+                            <i class="bi bi-search text-warning"></i>
+                        </div>
+                        <div class="stat-value mt-2 text-warning">
+                            {{ dashboardData?.statusCounts?.['FAIL_VERIFY'] || 0 }}
+                        </div>
+                        <div class="small text-muted mt-1">需人工核查</div>
+                    </div>
+
+                    <div class="stat-card bg-light cursor-pointer" @click="globalVerify(selectedJob.id)">
+                        <div class="d-flex align-items-center justify-content-center h-100 text-primary">
+                            <div class="text-center">
+                                <i class="bi bi-speedometer2 fs-3"></i>
+                                <div class="fw-bold mt-1">进入总账核对</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. 批次列表 (保持原有逻辑，增加一点样式微调) -->
+                <div class="card flex-shrink-0" style="max-height: 40%;">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span><i class="bi bi-collection me-2"></i>批次列表 (OK文件)</span>
                         <button class="btn btn-sm btn-outline-secondary" @click="fetchBatches"><i class="bi bi-arrow-clockwise"></i></button>
@@ -157,6 +217,7 @@
                     </div>
                 </div>
 
+                <!-- 3. 文件明细 (保持原有逻辑) -->
                 <div class="card flex-grow-1 d-flex flex-column" v-if="selectedBatch">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
                         <span>
@@ -280,43 +341,51 @@
                     <td>{{ getFileName(s.splitFilePath) }}</td>
                     <td>
                         <div :class="getStatusClass(s.status)" class="badge mb-1">{{ s.status }}</div>
-                        <div v-if="s.errorMsg" class="text-danger text-break" style="font-size: 0.75rem; line-height: 1.2;">{{ s.errorMsg }}</div>
-                    </td>
-                    <td>
-                        <button @click="downloadSplit(s)"
-                                class="btn btn-outline-primary btn-xs w-100 mb-1"
-                                title="下载到本地">
-                            <i class="bi bi-download"></i> 下载
-                        </button>
-
-                        <button v-if="s.status === 'FAIL_LOAD'"
-                                @click="retrySplit(s)"
-                                class="btn btn-warning btn-xs w-100 mb-1">
-                            <i class="bi bi-arrow-repeat"></i> 重试加载
-                        </button>
-
-                        <div v-if="s.status === 'FAIL_VERIFY'" class="d-flex gap-1 mb-1">
-                            <button @click="reVerifySplit(s)"
-                                    class="btn btn-info btn-xs flex-grow-1" title="仅重新运行比对">
-                                重验
-                            </button>
-                            <button @click="retrySplit(s)"
-                                    class="btn btn-outline-warning btn-xs" title="删除数据重新装载">
-                                重载
+                        <!-- 快速诊断按钮 -->
+                        <div v-if="s.errorMsg || s.status.includes('FAIL')" class="mt-1">
+                            <button class="btn btn-link btn-xs text-danger p-0 text-decoration-none"
+                                    @click="previewDiagnosis(s)">
+                                <i class="bi bi-bug"></i> 查看原因
                             </button>
                         </div>
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1 flex-wrap">
+                            <button @click="downloadSplit(s)"
+                                    class="btn btn-outline-primary btn-xs w-100 mb-1"
+                                    title="下载到本地">
+                                <i class="bi bi-download"></i> 下载
+                            </button>
 
-                        <button v-if="s.status === 'PASS'"
-                                @click="reVerifySplit(s)"
-                                class="btn btn-outline-secondary btn-xs w-100 mb-1">
-                            <i class="bi bi-search"></i> 复核
-                        </button>
+                            <button v-if="s.status === 'FAIL_LOAD'"
+                                    @click="retrySplit(s)"
+                                    class="btn btn-warning btn-xs w-100 mb-1">
+                                <i class="bi bi-arrow-repeat"></i> 重试加载
+                            </button>
 
-                        <button v-if="s.status === 'FAIL_VERIFY'"
-                                @click="viewDiff(s)"
-                                class="btn btn-danger btn-xs w-100">
-                            查看差异
-                        </button>
+                            <div v-if="s.status === 'FAIL_VERIFY'" class="d-flex gap-1 mb-1">
+                                <button @click="reVerifySplit(s)"
+                                        class="btn btn-info btn-xs flex-grow-1" title="仅重新运行比对">
+                                    重验
+                                </button>
+                                <button @click="retrySplit(s)"
+                                        class="btn btn-outline-warning btn-xs" title="删除数据重新装载">
+                                    重载
+                                </button>
+                            </div>
+
+                            <button v-if="s.status === 'PASS'"
+                                    @click="reVerifySplit(s)"
+                                    class="btn btn-outline-secondary btn-xs w-100 mb-1">
+                                <i class="bi bi-search"></i> 复核
+                            </button>
+
+                            <button v-if="s.status === 'FAIL_VERIFY'"
+                                    @click="viewDiff(s)"
+                                    class="btn btn-danger btn-xs w-100">
+                                查看差异
+                            </button>
+                        </div>
                     </td>
                 </tr>
 
@@ -491,7 +560,31 @@
         </div>
     </div>
 
+    <!-- 新增：诊断预览 Modal (轻量级) -->
+    <div class="modal fade show" v-if="showDiagnosisModal" style="display: block; background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white py-2">
+                    <h6 class="modal-title"><i class="bi bi-activity"></i> 故障诊断 (Split {{ currentDiagnosisSplit?.id }})</h6>
+                    <button type="button" class="btn-close btn-close-white" @click="showDiagnosisModal = false"></button>
+                </div>
+                <div class="modal-body bg-light p-0">
+                    <div class="p-2 border-bottom bg-white small">
+                        <strong>文件:</strong> {{ currentDiagnosisSplit?.splitFilePath }}
+                    </div>
+                    <pre class="p-3 mb-0 text-danger" style="max-height: 50vh; overflow: auto; font-size: 0.85rem;">{{ diagnosisContent }}</pre>
+                </div>
+                <div class="modal-footer py-1">
+                    <button class="btn btn-sm btn-outline-secondary" @click="downloadSplit(currentDiagnosisSplit)">
+                        <i class="bi bi-download"></i> 下载原始文件
+                    </button>
+                    <button class="btn btn-sm btn-secondary" @click="showDiagnosisModal = false">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
+
 
 <script>
     const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
@@ -563,7 +656,38 @@
                 size: 20
             });
 
+            const dashboardData = ref({}); // 存储 Dashboard 数据
+            const showDiagnosisModal = ref(false);
+            const diagnosisContent = ref('');
+            const currentDiagnosisSplit = ref(null);
 
+            // 获取 Dashboard 数据
+            const loadDashboard = async () => {
+                if (!selectedJob.value) return;
+                // 注意：这里需要后端实现 /job/{id}/dashboard 接口
+                // 如果后端还没好，可以先注释掉或用 mock
+                try {
+                    // const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/dashboard`);
+                    // dashboardData.value = res.data;
+
+                    // Mock 数据演示：
+                    dashboardData.value = {
+                        statusCounts: { 'FAIL_LOAD': 2, 'FAIL_VERIFY': 5 }
+                    };
+                } catch(e) { console.warn("Dashboard load failed", e); }
+            };
+
+            const previewDiagnosis = async (split) => {
+                currentDiagnosisSplit.value = split;
+                diagnosisContent.value = "正在获取日志...";
+                showDiagnosisModal.value = true;
+                try {
+                    const res = await axios.get(`${API_BASE}/split/${split.id}/diagnosis-preview`);
+                    diagnosisContent.value = res.data;
+                } catch (e) {
+                    diagnosisContent.value = "无法获取诊断信息: " + e.message;
+                }
+            };
 
             // --- 核心数据获取 ---
             const loadJobs = async () => {
@@ -621,6 +745,9 @@
                 selectedDetail.value = null;
                 batches.value = [];
                 detailsData.value = { content: [] };
+                fetchBatches();
+
+                loadDashboard(); // 加载 Dashboard
                 fetchBatches();
             };
 
@@ -933,6 +1060,7 @@
                         // 智能刷新：只刷新当前打开的视图
                         if(!selectedJob.value) loadJobs();
                         else {
+                            loadDashboard(); // 实时刷新红绿灯
                             fetchBatches(); // 刷新批次状态
                             if(selectedBatch.value) fetchDetails(); // 刷新明细进度
                             if(showSplitDrawer.value && selectedDetail.value) {
@@ -973,7 +1101,11 @@
                 verifyLoading,
                 verifyResults,
                 globalVerify,
-                currentVerifyJobId
+                currentVerifyJobId,
+
+                dashboardData,
+                showDiagnosisModal, diagnosisContent, currentDiagnosisSplit,
+                previewDiagnosis
             };
         }
     }).mount('#app');
