@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/migration")
@@ -264,18 +265,17 @@ public class MigrationController {
                 }
 
                 // 2. 读取前 100 行
-                List<String> lines = Files.readAllLines(badFileName);
+                // 【优化】使用 Stream API 流式读取，只读前 100 行，避免大文件 OOM
                 StringBuilder sb = new StringBuilder();
                 sb.append("--- 失败行预览 (Top 100) ---\n");
                 sb.append("文件路径: ").append(badFileName).append("\n\n");
 
-                int limit = Math.min(lines.size(), 100);
-                for (int i = 0; i < limit; i++) {
-                    sb.append(lines.get(i)).append("\n");
+                try (Stream<String> lines = Files.lines(badFileName)) {
+                    lines.limit(100).forEach(line -> sb.append(line).append("\n"));
                 }
-                if (lines.size() > limit) {
-                    sb.append("\n... (剩余 ").append(lines.size() - limit).append(" 行未显示) ...");
-                }
+
+                // 无法准确知道是否还有剩余，除非多读一行。但为了性能，这样足够了。
+                sb.append("\n... (如需查看更多，请登录服务器) ...");
 
                 return ResponseEntity.ok(sb.toString());
 
@@ -508,15 +508,12 @@ public class MigrationController {
                 }
 
                 // 读取前 100 行 (防止文件过大撑爆浏览器)
-                List<String> lines = Files.readAllLines(verifyResultFile);
+                // 【优化】同样使用 Stream 防止 OOM
                 StringBuilder sb = new StringBuilder();
-                int limit = Math.min(lines.size(), 200);
-                for(int i=0; i<limit; i++) {
-                    sb.append(lines.get(i)).append("\n");
+                try (Stream<String> lines = Files.lines(verifyResultFile)) {
+                    lines.limit(200).forEach(line -> sb.append(line).append("\n"));
                 }
-                if (lines.size() > limit) {
-                    sb.append("\n... (更多内容请在服务器查看) ...");
-                }
+                sb.append("\n... (更多内容请在服务器查看) ...");
 
                 return ResponseEntity.ok(sb.toString());
             } catch (Exception e) {

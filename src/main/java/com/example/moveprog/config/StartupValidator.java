@@ -26,14 +26,26 @@ public class StartupValidator implements ApplicationRunner {
         log.info(">>> 开始应用启动自检...");
 
         try {
-            if (!isLocalIP(config.getCurrentNodeIp())) {
-                throw new RuntimeException("currentNodeIp 必须配置本机地址");
+            String configuredIp = config.getCurrentNodeIp();
+
+            if (configuredIp == null || configuredIp.trim().isEmpty()) {
+                throw new RuntimeException("严重错误: app.current-node-ip 未配置！系统无法启动。");
+            }
+
+            if (!isLocalIP(configuredIp)) {
+                log.error("==================================================================");
+                log.error(" 配置错误: app.current-node-ip={} 不是本机有效IP！", configuredIp);
+                log.error(" 这将导致 ClusterBridgeService 死循环或无法接收任务调度。");
+                log.error(" 请检查 `ifconfig` 或 `ipconfig`。");
+                log.error("==================================================================");
+                // 强制退出，防止带病运行
+                throw new RuntimeException("配置的 IP 不是本机 IP: " + configuredIp);
             }
 
             // 校验数据库连接
             validateDatabase();
 
-            log.info("<<< 应用自检通过，服务正常启动。");
+            log.info("<<< 应用自检通过，服务正常启动。 Node IP: {}", configuredIp);
 
         } catch (Exception e) {
             log.error("************************************************************");
@@ -82,8 +94,10 @@ public class StartupValidator implements ApplicationRunner {
             }
             return false;
         } catch (Exception e) {
+            log.warn("无法验证本机IP", e);
+            // 容错：如果无法获取网卡信息，暂时放行，但打印警告
+            return true;
         }
-        return false;
     }
 
 

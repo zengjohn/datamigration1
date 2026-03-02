@@ -203,6 +203,10 @@ public class LoadService {
             while ((row = parser.parseNext()) != null) {
                 // CSV行结构: [业务列1, 业务列2, ..., csv拆分id, 行号]
                 // 刚好与我们的 Insert SQL 参数顺序对应
+                if (row.length + 1 != loadSqlColumns.size()) {
+                    throw new RuntimeException("CSV列数不匹配！RowLength=" + row.length +
+                            " (含行号), SQLExpected=" + (loadSqlColumns.size()-2));
+                }
 
                 // 填充参数
                 for (int i = 0; i < row.length-1; i++) {
