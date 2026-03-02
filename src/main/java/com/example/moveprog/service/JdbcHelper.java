@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -87,18 +88,18 @@ public class JdbcHelper {
     /**
      * 产生删除(目标表)装载数据sql
      * @param splitId
-     * @return
+     * @return Pair<SQL, 参数列表>
      */
-    public String deleteSql(Long splitId) {
+    public Pair<String, List<Object>> deleteSql(Long splitId) {
         CsvSplit csvSplit = csvSplitRepository.findById(splitId).orElseThrow();
         Qianyi qianyi = qianyiRepo.findById(csvSplit.getQianyiId()).orElseThrow();
         String tableName = qianyiTableName(qianyi.getId());
 
-        String sql = "DELETE FROM " + tableName + " WHERE " + columnQuote(config.getLoadJdbc().getColumnNameCsvId()) + "=" + splitId;
-        return sql;
+        String sql = "DELETE FROM " + tableName + " WHERE " + columnQuote(config.getLoadJdbc().getColumnNameCsvId()) + "=?";
+        return Pair.of(sql, Collections.singletonList(splitId));
     }
 
-    public String verifySelectSql(Long splitId) throws IOException {
+    public Pair<String, List<Object>> verifySelectSql(Long splitId) throws IOException {
         CsvSplit csvSplit = csvSplitRepository.findById(splitId).orElseThrow();
 
         Qianyi qianyi = qianyiRepo.findById(csvSplit.getQianyiId()).orElseThrow();
@@ -110,10 +111,12 @@ public class JdbcHelper {
         String columnList = columnNames.stream().map(c -> columnQuote(c)).collect(Collectors.joining(","));
 
         // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
+        // 使用占位符 ?
         String sql = "SELECT " + columnList + " FROM " + tableName +
-                " WHERE " + columnQuote(config.getLoadJdbc().getColumnNameCsvId()) + " = " + csvSplit.getId() +
+                " WHERE " + columnQuote(config.getLoadJdbc().getColumnNameCsvId()) + " = ?" +
                 " ORDER BY " + columnQuote(config.getLoadJdbc().getColumnNameSourceRowNo()) + " ASC";
-        return sql;
+
+        return Pair.of(sql, Collections.singletonList(csvSplit.getId()));
     }
 
     /**

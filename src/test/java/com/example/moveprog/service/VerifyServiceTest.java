@@ -25,18 +25,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.*;
 import java.lang.reflect.Field;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.Statement;
+import java.sql.*;
 import java.util.Collections;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -118,21 +115,29 @@ class VerifyServiceTest {
         // Mock DDL 解析
         schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(any())).thenReturn(Collections.emptyList());
 
+        // 【关键修复 1】Mock JdbcHelper，防止 sqlPair.getKey() 空指针
+        // 注意：这里需要 import org.apache.commons.lang3.tuple.Pair;
+        when(jdbcHelper.verifySelectSql(anyLong())).thenReturn(org.apache.commons.lang3.tuple.Pair.of("SELECT 'mock_sql'", Collections.emptyList()));
+
         // Mock DB 迭代器 (为了让代码跑到 createFileIterator，必须让 DB 部分不报错)
         Connection mockConn = mock(Connection.class);
-        Statement mockStmt = mock(Statement.class);
+        PreparedStatement mockPrepareStmt = mock(PreparedStatement.class);
         ResultSet mockRs = mock(ResultSet.class);
         ResultSetMetaData mockMeta = mock(ResultSetMetaData.class);
 
         // 1. Mock Connection -> Statement
         lenient().when(targetDatabaseConnectionManager.getConnection(anyLong(), anyBoolean())).thenReturn(mockConn);
         // Important: Match any generic createStatement call
-        lenient().when(mockConn.createStatement(anyInt(), anyInt())).thenReturn(mockStmt);
-        lenient().when(mockConn.createStatement()).thenReturn(mockStmt);
+        lenient().when(mockConn.prepareStatement(anyString(), anyInt(), anyInt())).thenReturn(mockPrepareStmt);
+        lenient().when(mockConn.prepareStatement(anyString())).thenReturn(mockPrepareStmt);
 
         // 2. Mock Statement -> ResultSet
         // This was the cause of NPE. We ensure ANY executeQuery returns our mockRs
-        lenient().when(mockStmt.executeQuery(any())).thenReturn(mockRs);
+        // 【关键修复 2】Mock executeQuery
+        // 如果你代码改为了 ps.executeQuery() (无参)，之前的 mock(any()) 就不生效了
+        // 所以这里同时 Mock 无参和有参两种情况，确保万无一失
+        lenient().when(mockPrepareStmt.executeQuery()).thenReturn(mockRs);           // 对应 ps.executeQuery()
+        lenient().when(mockPrepareStmt.executeQuery(anyString())).thenReturn(mockRs); // 对应 ps.executeQuery(sql)
 
         // 3. Mock ResultSet Metadata (prevent NPE in JdbcRowIterator constructor)
         lenient().when(mockRs.getMetaData()).thenReturn(mockMeta);
@@ -228,21 +233,29 @@ class VerifyServiceTest {
         // Mock DDL 解析
         schemaParseUtilMock.when(() -> SchemaParseUtil.parseColumnNamesFromDdl(any())).thenReturn(Collections.emptyList());
 
+        // 【关键修复 1】Mock JdbcHelper，防止 sqlPair.getKey() 空指针
+        // 注意：这里需要 import org.apache.commons.lang3.tuple.Pair;
+        when(jdbcHelper.verifySelectSql(anyLong())).thenReturn(org.apache.commons.lang3.tuple.Pair.of("SELECT 'mock_sql'", Collections.emptyList()));
+
         // Mock DB 迭代器 (为了让代码跑到 createFileIterator，必须让 DB 部分不报错)
         Connection mockConn = mock(Connection.class);
-        Statement mockStmt = mock(Statement.class);
+        PreparedStatement mockPrepareStmt = mock(PreparedStatement.class);
         ResultSet mockRs = mock(ResultSet.class);
         ResultSetMetaData mockMeta = mock(ResultSetMetaData.class);
 
         // 1. Mock Connection -> Statement
         lenient().when(targetDatabaseConnectionManager.getConnection(anyLong(), anyBoolean())).thenReturn(mockConn);
         // Important: Match any generic createStatement call
-        lenient().when(mockConn.createStatement(anyInt(), anyInt())).thenReturn(mockStmt);
-        lenient().when(mockConn.createStatement()).thenReturn(mockStmt);
+        lenient().when(mockConn.prepareStatement(anyString(), anyInt(), anyInt())).thenReturn(mockPrepareStmt);
+        lenient().when(mockConn.prepareStatement(anyString())).thenReturn(mockPrepareStmt);
 
         // 2. Mock Statement -> ResultSet
         // This was the cause of NPE. We ensure ANY executeQuery returns our mockRs
-        lenient().when(mockStmt.executeQuery(any())).thenReturn(mockRs);
+        // 【关键修复 2】Mock executeQuery
+        // 如果你代码改为了 ps.executeQuery() (无参)，之前的 mock(any()) 就不生效了
+        // 所以这里同时 Mock 无参和有参两种情况，确保万无一失
+        lenient().when(mockPrepareStmt.executeQuery()).thenReturn(mockRs);           // 对应 ps.executeQuery()
+        lenient().when(mockPrepareStmt.executeQuery(anyString())).thenReturn(mockRs); // 对应 ps.executeQuery(sql)
 
         // 3. Mock ResultSet Metadata (prevent NPE in JdbcRowIterator constructor)
         lenient().when(mockRs.getMetaData()).thenReturn(mockMeta);

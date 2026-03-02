@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.Assert;
 
 import java.sql.*;
+import java.util.List;
 import java.util.Objects;
 
 @Slf4j
@@ -17,20 +18,26 @@ public class JdbcRowIterator implements CloseableRowIterator {
     private int[] columnTypes;
 
     private Connection conn;
-    private Statement ps;
+    private PreparedStatement ps;
     private ResultSet rs;
 
     private int colCount;
     private boolean hasNext;
 
-    public JdbcRowIterator(TargetDatabaseConnectionManager targetDatabaseConnectionManager, Long jobId, String sql, int fetchSize) throws SQLException {
+    public JdbcRowIterator(TargetDatabaseConnectionManager targetDatabaseConnectionManager, Long jobId, String sql, List<Object> params, int fetchSize) throws SQLException {
         this.sql = sql;
         boolean success = false; // 标记是否构造成功
 
         try {
             this.conn = targetDatabaseConnectionManager.getConnection(jobId, true);
-            this.ps = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+            this.ps = conn.prepareStatement(sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
             this.ps.setQueryTimeout(600);
+            // 设置参数
+            if (params != null) {
+                for (int i = 0; i < params.size(); i++) {
+                    this.ps.setObject(i + 1, params.get(i));
+                }
+            }
             if (fetchSize < 0) {
                 // 【关键】必须设置为 Integer.MIN_VALUE 才能开启 MySQL 的流式读取
                 this.ps.setFetchSize(Integer.MIN_VALUE); // 开启流式
@@ -38,11 +45,12 @@ public class JdbcRowIterator implements CloseableRowIterator {
                 this.ps.setFetchSize(fetchSize); // url中需要配置 useCursorFetch=true
             }
 
+
             if (log.isDebugEnabled()) {
                 log.debug("{} splitId: {}", sql);
             }
 
-            this.rs = ps.executeQuery(sql);
+            this.rs = ps.executeQuery();
             Assert.isTrue(Objects.nonNull(this.rs), "executeQuery(" + sql + ")返回的rs不能为空");
             ResultSetMetaData meta = this.rs.getMetaData();
             int colCount = meta.getColumnCount();

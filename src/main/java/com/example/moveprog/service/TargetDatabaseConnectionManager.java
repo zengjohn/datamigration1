@@ -12,12 +12,14 @@ import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.Pair;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
@@ -143,14 +145,20 @@ public class TargetDatabaseConnectionManager {
             conn.setAutoCommit(false);
 
             try {
-                String deleteSql = jdbcHelper.deleteSql(splitId);
-                executeUpdateSql(conn, deleteSql);
+                Pair<String, List<Object>> sqlPair = jdbcHelper.deleteSql(splitId);
+                executeUpdate(conn, sqlPair.getKey(), sqlPair.getValue());
 
                 // 2. 【必需】显式提交
                 conn.commit();
             } catch (Exception e) {
                 // 3. 出错回滚
-                conn.rollback();
+                if (conn != null) {
+                    try {
+                        conn.rollback();
+                    } catch (SQLException ex) {
+                        log.error("Rollback failed", ex);
+                    }
+                }
                 throw e;
             }
         }
@@ -176,17 +184,41 @@ public class TargetDatabaseConnectionManager {
                 try {
                     for (CsvSplit csvSplit : csvSplits) {
                         // 2. 执行多条 SQL
-                        String deleteSql = jdbcHelper.deleteSql(csvSplit.getId());
-                        executeUpdateSql(conn, deleteSql);
+                        Pair<String, List<Object>> deleteSqlPair = jdbcHelper.deleteSql(csvSplit.getId());
+                        executeUpdate(conn, deleteSqlPair.getKey(), deleteSqlPair.getValue());
                     }
                     // 3. 【必须】显式提交
                     conn.commit();
                 } catch (Exception e) {
                     // 4. 出错回滚
-                    conn.rollback();
+                    if (conn != null) {
+                        try {
+                            conn.rollback();
+                        } catch (SQLException ex) {
+                            log.error("Rollback failed", ex);
+                        }
+                    }
                     throw e;
                 }
             }
+        }
+    }
+
+    /**
+     * 【新增】支持参数绑定的执行更新方法
+     */
+    public static void executeUpdate(Connection conn, String sql, List<Object> params) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (params != null) {
+                for (int i = 0; i < params.size(); i++) {
+                    ps.setObject(i + 1, params.get(i));
+                }
+            }
+            log.info("Execute update SQL: {} with params: {}", sql, params);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            log.error("Failed to execute SQL: {} with params: {}", sql, params, e);
+            throw e;
         }
     }
 

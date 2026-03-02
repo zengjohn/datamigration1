@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.List;
 
 /**
  * 校验服务
@@ -103,8 +104,8 @@ public class VerifyService {
 
     private JdbcRowIterator createDbIterator(CsvSplit split) throws Exception {
         // SQL: 强制按 source_row_no 排序，保证流式读取顺序与文件一致
-        String sql = jdbcHelper.verifySelectSql(split.getId());
-        JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getJobId(), sql, config.getVerify().getFetchSize());
+        Pair<String, List<Object>> sqlPair = jdbcHelper.verifySelectSql(split.getId());
+        JdbcRowIterator dbIter = new JdbcRowIterator(targetDatabaseConnectionManager, split.getJobId(), sqlPair.getKey(), sqlPair.getValue(), config.getVerify().getFetchSize());
         return dbIter;
     }
 
