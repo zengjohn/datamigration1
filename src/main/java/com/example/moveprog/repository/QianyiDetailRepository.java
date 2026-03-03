@@ -142,5 +142,20 @@ public interface QianyiDetailRepository extends JpaRepository<QianyiDetail, Long
     Long sumSourceRows(@Param("jobId") Long jobId,
                        @Param("schema") String schema,
                        @Param("tableName") String tableName);
+    /**
+     * 【新增】统计当前作业下出现频率最高的 5 个转码错误信息 (Detail 级别)
+     */
+    @Query(value = """
+        SELECT error_msg, COUNT(*) as cnt 
+        FROM qianyi_detail 
+        WHERE job_id = :jobId 
+          AND status IN ('FAIL_TRANSCODE') 
+          AND error_msg IS NOT NULL 
+          AND error_msg != '' 
+        GROUP BY error_msg 
+        ORDER BY cnt DESC 
+        LIMIT 5
+        """, nativeQuery = true)
+    List<Object[]> findTopErrorsByJobId(@Param("jobId") Long jobId);
 
 }

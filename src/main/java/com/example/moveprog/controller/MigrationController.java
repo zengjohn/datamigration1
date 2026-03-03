@@ -533,15 +533,84 @@ public class MigrationController {
         JobDashboardDto dto = new JobDashboardDto();
         dto.setJobId(jobId);
 
-        // 1. 统计各状态数量 (建议在 Repository 写个 countByJobIdGroupByStatus 的 SQL)
-        // 这里演示逻辑：
-        // List<Object[]> counts = splitRepo.countStatusByJobId(jobId);
-        // Map<String, Long> statusMap = counts.stream().collect(...);
-        // dto.setStatusCounts(statusMap);
+        // 1. 获取各状态的数量分布
+        List<Object[]> statusResult = splitRepo.countStatusByJobId(jobId);
+        Map<String, Long> statusCounts = new HashMap<>();
 
-        // 2. 简单的 Mock 数据 (请替换为真实 Service 调用)
-        // 实际开发中，你应该在 JobService 里实现 calculateDashboard(jobId)
-        // 比如: total = count(all), load_ok = count(WAIT_VERIFY + PASS + FAIL_VERIFY)
+        long totalSplits = 0;
+        long loadedSplits = 0;   // 已装载完成的 (无论成功失败)
+        long verifiedSplits = 0; // 已校验通过的
+
+        for (Object[] row : statusResult) {
+            String status = row[0].toString();
+            Long count = ((Number) row[1]).longValue();
+
+            statusCounts.put(status, count);
+            totalSplits += count;
+
+            // 统计装载进度：只要度过了 WAIT_LOAD 和 LOADING 和 FAIL_LOAD 阶段的，都算装载完毕
+            if (Set.of("WAIT_VERIFY", "VERIFYING", "PASS", "FAIL_VERIFY").contains(status)) {
+                loadedSplits += count;
+            }
+            // 统计校验进度：只有 PASS 算校验完成
+            if ("PASS".equals(status)) {
+                verifiedSplits += count;
+            }
+        }
+        dto.setStatusCounts(statusCounts);
+
+        // 2. 计算进度百分比 (0-100)
+        if (totalSplits > 0) {
+            dto.setLoadProgress((int) (loadedSplits * 100 / totalSplits));
+            dto.setVerifyProgress((int) (verifiedSplits * 100 / totalSplits));
+        } else {
+            dto.setLoadProgress(0);
+            dto.setVerifyProgress(0);
+        }
+
+        // 转码进度通常由 Detail 表决定，为了不给数据库增加过多压力，这里做个简单预估，
+        // 或者您也可以在 detailRepo 写一个类似的 countStatus 查询。
+        dto.setTranscodeProgress(100);
+
+        // ==========================================
+        // 3. 获取 Top 5 错误摘要 (合并切片报错 + 转码报错)
+        // ==========================================
+        List<Object[]> splitErrors = splitRepo.findTopErrorsByJobId(jobId);     // FAIL_LOAD, FAIL_VERIFY
+        List<Object[]> transcodeErrors = detailRepo.findTopErrorsByJobId(jobId); // FAIL_TRANSCODE
+
+        // 使用 HashMap 汇总，防止两边抛出了一模一样的错误提示
+        Map<String, Long> combinedErrors = new HashMap<>();
+
+        // 收集切片错误
+        for (Object[] row : splitErrors) {
+            String msg = (String) row[0];
+            Long count = ((Number) row[1]).longValue();
+            combinedErrors.put(msg, combinedErrors.getOrDefault(msg, 0L) + count);
+        }
+
+        // 收集转码错误
+        for (Object[] row : transcodeErrors) {
+            String msg = (String) row[0];
+            Long count = ((Number) row[1]).longValue();
+            combinedErrors.put(msg, combinedErrors.getOrDefault(msg, 0L) + count);
+        }
+
+        // 在内存中对合并后的结果按数量降序排序，并截取前 5 名
+        Map<String, Long> topErrors = combinedErrors.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()) // 按数量倒序
+                .limit(5) // 取前5个
+                .collect(Collectors.toMap(
+                        entry -> {
+                            // 限制错误文本长度，防止前端撑爆
+                            String errorMsg = entry.getKey();
+                            return errorMsg.length() > 100 ? errorMsg.substring(0, 97) + "..." : errorMsg;
+                        },
+                        Map.Entry::getValue,
+                        (e1, e2) -> e1, // 键冲突处理（这里不会发生）
+                        LinkedHashMap::new // 必须用 LinkedHashMap 保持排序写入
+                ));
+
+        dto.setTopErrors(topErrors);
 
         return ResponseEntity.ok(dto);
     }
@@ -574,35 +643,57 @@ public class MigrationController {
      */
     @GetMapping("/split/{splitId}/diagnosis-preview")
     public ResponseEntity<String> getDiagnosisPreview(@PathVariable Long splitId) {
-        CsvSplit split = splitRepo.findById(splitId).orElseThrow();
+        CsvSplit split = splitRepo.findById(splitId).orElse(null);
+        if (split == null) {
+            return ResponseEntity.badRequest().body("切片未找到");
+        }
 
-        Path fileToRead = null;
-        String headerMsg = "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== 异常诊断报告 ===\n");
+        sb.append("切片 ID: ").append(split.getId()).append("\n");
+        sb.append("当前状态: ").append(split.getStatus()).append("\n");
 
-        /*if (split.getStatus() == CsvSplitStatus.FAIL_VERIFY) {
-            // 尝试读取差异文件
-            fileToRead = migrationArtifactManager.getVerifyDiffPath(split);
-            headerMsg = "=== 校验差异报告 (Verify Diff) ===\n";
-        } else if (split.getStatus() == CsvSplitStatus.FAIL_TRANSCODE) {
-            // 尝试读取转码错误日志 (如果有的话，或者直接显示 message)
-            headerMsg = "=== 转码错误日志 ===\n";
-        } else if (split.getStatus() == CsvSplitStatus.FAIL_LOAD) {
-            headerMsg = "=== 装载失败信息 (DB Error) ===\n";
-            // 装载失败通常没有文件，只有数据库里的 message
-            return ResponseEntity.ok(headerMsg + split.getMessage());
-        }*/
+        if (split.getErrorMsg() != null && !split.getErrorMsg().isEmpty()) {
+            sb.append("\n[系统错误信息]\n");
+            sb.append(split.getErrorMsg()).append("\n");
+        } else {
+            sb.append("\n该切片暂无异常信息，或尚未执行完成。");
+        }
 
-        if (fileToRead != null && Files.exists(fileToRead)) {
-            try {
-                List<String> lines = Files.readAllLines(fileToRead).stream().limit(100).collect(Collectors.toList());
-                return ResponseEntity.ok(headerMsg + String.join("\n", lines));
-            } catch (IOException e) {
-                return ResponseEntity.internalServerError().body("读取文件失败: " + e.getMessage());
+        // 如果您有把异常输出到 .bad 文件，这里也可以去读 .bad 文件的头 5 行返回
+
+        return ResponseEntity.ok(sb.toString());
+    }
+
+    /**
+     * 【新增】获取某个文件明细下，所有切片的全局状态统计
+     */
+    @GetMapping("/detail/{detailId}/splits/stats")
+    public ResponseEntity<Map<String, Long>> getSplitStats(@PathVariable Long detailId) {
+        List<Object[]> statusResult = splitRepo.countStatusByDetailId(detailId);
+        long pass = 0, fail = 0, proc = 0, total = 0;
+
+        for (Object[] row : statusResult) {
+            String status = row[0].toString();
+            long count = ((Number) row[1]).longValue();
+            total += count;
+
+            if ("PASS".equals(status)) {
+                pass += count;
+            } else if (status.contains("FAIL")) {
+                fail += count;
+            } else {
+                proc += count;
             }
         }
 
-        // 保底：返回数据库存储的错误信息
-        return ResponseEntity.ok(headerMsg + (split.getErrorMsg() != null ? split.getErrorMsg() : "暂无详细日志文件"));
+        // JDK 9+ 的 Map.of 语法
+        return ResponseEntity.ok(Map.of(
+                "pass", pass,
+                "fail", fail,
+                "proc", proc,
+                "total", total
+        ));
     }
 
 }

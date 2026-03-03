@@ -5,7 +5,6 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>数据迁移运维控制台 V3.0</title>
     <link href="/assets/css/bootstrap.min.css?v=20260206_1015" rel="stylesheet">
@@ -14,68 +13,180 @@
     <script src="/assets/js/axios.min.js?v=20260206_1015"></script>
 
     <style>
-        :root { --sidebar-width: 280px; }
-        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 0.9rem; overflow-x: hidden;}
-
-        /* 布局调整 */
-        .main-container { height: 100vh; display: flex; flex-direction: column; }
-        .content-area { flex: 1; overflow: hidden; display: flex; }
-        .sidebar { width: var(--sidebar-width); border-right: 1px solid #dee2e6; background: white; display: flex; flex-direction: column; }
-        .workspace { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
-
-        /* 卡片优化 */
-        .card { box-shadow: 0 2px 6px rgba(0,0,0,0.04); border: 1px solid #e9ecef; }
-        .card-header { background-color: #fff; font-weight: 600; border-bottom: 2px solid #f1f3f5; padding: 0.75rem 1rem;}
-
-        /* 表格样式 */
-        .table-hover tbody tr:hover { background-color: #f8f9fa; }
-        .cursor-pointer { cursor: pointer; }
-        .selected-row { background-color: #e7f1ff !important; border-left: 3px solid #0d6efd; }
-
-        /* 状态徽章 */
-        .badge { font-weight: 500; letter-spacing: 0.3px; }
-
-        /* 右侧抽屉 (Drawer) */
-        .drawer-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.3); z-index: 1040;
-        }
-        .drawer {
-            position: fixed; top: 0; right: 0; height: 100%; width: 600px;
-            background: white; box-shadow: -4px 0 10px rgba(0,0,0,0.1);
-            z-index: 1050; transition: transform 0.3s ease-in-out;
-            transform: translateX(100%); display: flex; flex-direction: column;
-        }
-        .drawer.open { transform: translateX(0); }
-        .drawer-header { padding: 1rem; border-bottom: 1px solid #dee2e6; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa;}
-        .drawer-body { flex: 1; overflow-y: auto; padding: 0; }
-
-        /* 差异查看器 */
-        .diff-modal { max-width: 900px; }
-        .diff-content {
-            background: #2b2b2b; color: #f8f8f2; padding: 1rem;
-            border-radius: 4px; font-family: 'Consolas', monospace;
-            white-space: pre-wrap; font-size: 0.85rem; max-height: 60vh; overflow: auto;
+        :root {
+            --sidebar-width: 280px;
         }
 
-        /* 新增 Dashboard 样式 */
-        .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
-        .stat-card { background: white; border-radius: 8px; padding: 1rem; border: 1px solid #e9ecef; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .stat-value { font-size: 1.5rem; font-weight: bold; color: #2c3e50; }
-        .stat-label { font-size: 0.85rem; color: #6c757d; }
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 0.9rem;
+            overflow-x: hidden;
+        }
 
-        /* 进度条增强 */
-        .progress-stacked { display: flex; height: 8px; overflow: hidden; background-color: #e9ecef; border-radius: 4px; margin-top: 5px;}
-        .progress-segment { height: 100%; transition: width 0.6s ease; }
+        .main-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .content-area {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .sidebar {
+            width: var(--sidebar-width);
+            border-right: 1px solid #dee2e6;
+            background: white;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .workspace {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
 
         .card {
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+            border: 1px solid #e9ecef;
             transition: transform 0.2s;
         }
+
         .card:hover {
             transform: translateY(-5px);
         }
+
         .card-header {
-            font-family: 'Courier New', monospace; /* Makes IPs look cool */
+            background-color: #fff;
+            font-weight: 600;
+            border-bottom: 2px solid #f1f3f5;
+            padding: 0.75rem 1rem;
+            font-family: 'Courier New', monospace;
+        }
+
+        .table-hover tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .cursor-pointer {
+            cursor: pointer;
+        }
+
+        .selected-row {
+            background-color: #e7f1ff !important;
+            border-left: 3px solid #0d6efd;
+        }
+
+        .badge {
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        .drawer-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 1040;
+        }
+
+        .drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            height: 100%;
+            width: 600px;
+            background: white;
+            box-shadow: -4px 0 10px rgba(0, 0, 0, 0.1);
+            z-index: 1050;
+            transition: transform 0.3s ease-in-out;
+            transform: translateX(100%);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .drawer.open {
+            transform: translateX(0);
+        }
+
+        .drawer-header {
+            padding: 1rem;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8f9fa;
+        }
+
+        .drawer-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .diff-modal {
+            max-width: 900px;
+        }
+
+        .diff-content {
+            background: #2b2b2b;
+            color: #f8f8f2;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+            max-height: 60vh;
+            overflow: auto;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 8px;
+            padding: 1rem;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+
+        .progress-stacked {
+            display: flex;
+            height: 8px;
+            overflow: hidden;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+
+        .progress-segment {
+            height: 100%;
+            transition: width 0.6s ease;
         }
     </style>
 </head>
@@ -84,7 +195,6 @@
 <div id="app" class="main-container">
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary px-3 shadow-sm" style="height: 56px;">
         <span class="navbar-brand mb-0 h1"><i class="bi bi-hdd-network me-2"></i>数据迁移运维控制台</span>
-        <!-- 【新增】视图切换菜单 -->
         <div class="navbar-nav mx-4">
             <a class="nav-link px-3" :class="{active: currentView === 'jobs', 'fw-bold': currentView === 'jobs'}"
                href="#" @click.prevent="currentView = 'jobs'">
@@ -116,22 +226,24 @@
                 <div class="list-group list-group-flush">
                     <a href="#" v-for="job in filteredJobs" :key="job.id"
                        class="list-group-item list-group-item-action py-3"
-                       :class="{'selected-row': selectedJob?.id === job.id}"
-                       @click="selectJob(job)">
+                       :class="{'selected-row': selectedJob?.id === job.id}" @click="selectJob(job)">
                         <div class="d-flex w-100 justify-content-between mb-1">
-                            <strong class="text-truncate" style="max-width: 160px;" :title="job.name">{{ job.name }}</strong>
+                            <strong class="text-truncate" style="max-width: 160px;" :title="job.name">{{ job.name
+                                }}</strong>
                             <span :class="getStatusClass(job.status)" class="badge-sm">{{ job.status }}</span>
                         </div>
                         <div class="small text-muted text-truncate" :title="job.sourceDirectory">
                             <i class="bi bi-folder2-open me-1"></i>{{ job.sourceDirectory }}
                         </div>
                         <div class="mt-2" v-if="selectedJob?.id === job.id">
-                            <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')" class="btn btn-outline-danger btn-xs w-100" style="font-size: 0.75rem;">停止作业</button>
-                            <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')" class="btn btn-outline-success btn-xs w-100" style="font-size: 0.75rem;">恢复作业</button>
-                            <button class="btn btn-outline-primary btn-sm ms-1"
-                                    @click="globalVerify(job.id)"
-                                    title="总账核对">
-                                <i class="bi bi-calculator"></i> 核对
+                            <button v-if="job.status === 'ACTIVE'" @click.stop="jobAction(job, 'stop')"
+                                    class="btn btn-outline-danger btn-xs w-100" style="font-size: 0.75rem;">停止作业
+                            </button>
+                            <button v-if="job.status === 'STOPPED'" @click.stop="jobAction(job, 'resume')"
+                                    class="btn btn-outline-success btn-xs w-100" style="font-size: 0.75rem;">恢复作业
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm ms-1" @click="globalVerify(job.id)"
+                                    title="总账核对"><i class="bi bi-calculator"></i> 核对
                             </button>
                         </div>
                     </a>
@@ -140,79 +252,80 @@
         </div>
 
         <div class="workspace">
-
-            <div v-if="!selectedJob" class="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
+            <div v-if="!selectedJob"
+                 class="h-100 d-flex flex-column align-items-center justify-content-center text-muted">
                 <i class="bi bi-hdd-network display-1 mb-3 text-light-emphasis"></i>
                 <h5>请从左侧选择一个迁移作业</h5>
                 <p class="small">查看进度、监控状态或执行核对</p>
             </div>
-
             <template v-else>
-                <!-- 1. 新增：Dashboard 区域 -->
                 <div class="dashboard-grid">
                     <div class="stat-card border-start border-4 border-primary">
-                        <div class="d-flex justify-content-between">
-                            <span class="stat-label">总进度 (批次)</span>
-                            <i class="bi bi-pie-chart text-primary"></i>
-                        </div>
-                        <div class="stat-value mt-2">
-                            {{ batches.filter(b => b.status === 'FINISHED').length }} / {{ batches.length }}
+                        <div class="d-flex justify-content-between"><span class="stat-label">总进度 (批次)</span><i
+                                class="bi bi-pie-chart text-primary"></i></div>
+                        <div class="stat-value mt-2">{{ batches.filter(b => b.status === 'FINISHED').length }} / {{
+                            batches.length }}
                         </div>
                         <div class="progress mt-2" style="height: 4px;">
-                            <div class="progress-bar" :style="{width: (batches.length ? (batches.filter(b => b.status === 'FINISHED').length/batches.length*100) : 0) + '%'}"></div>
+                            <div class="progress-bar"
+                                 :style="{width: (batches.length ? (batches.filter(b => b.status === 'FINISHED').length/batches.length*100) : 0) + '%'}"></div>
                         </div>
                     </div>
-
                     <div class="stat-card border-start border-4 border-danger">
-                        <div class="d-flex justify-content-between">
-                            <span class="stat-label">异常切片 (需干预)</span>
-                            <i class="bi bi-exclamation-octagon text-danger"></i>
-                        </div>
-                        <!-- 这里的数据应该来自 dashboard api，暂时用 mock 或 computed -->
-                        <div class="stat-value mt-2 text-danger">
-                            {{ dashboardData?.statusCounts?.['FAIL_LOAD'] || 0 }}
+                        <div class="d-flex justify-content-between"><span class="stat-label">异常切片 (需干预)</span><i
+                                class="bi bi-exclamation-octagon text-danger"></i></div>
+                        <div class="stat-value mt-2 text-danger">{{ dashboardData?.statusCounts?.['FAIL_LOAD'] || 0 }}
                         </div>
                         <div class="small text-muted mt-1">装载失败</div>
                     </div>
-
                     <div class="stat-card border-start border-4 border-warning">
-                        <div class="d-flex justify-content-between">
-                            <span class="stat-label">校验不符</span>
-                            <i class="bi bi-search text-warning"></i>
-                        </div>
-                        <div class="stat-value mt-2 text-warning">
-                            {{ dashboardData?.statusCounts?.['FAIL_VERIFY'] || 0 }}
+                        <div class="d-flex justify-content-between"><span class="stat-label">校验不符</span><i
+                                class="bi bi-search text-warning"></i></div>
+                        <div class="stat-value mt-2 text-warning">{{ dashboardData?.statusCounts?.['FAIL_VERIFY'] || 0
+                            }}
                         </div>
                         <div class="small text-muted mt-1">需人工核查</div>
                     </div>
-
                     <div class="stat-card bg-light cursor-pointer" @click="globalVerify(selectedJob.id)">
                         <div class="d-flex align-items-center justify-content-center h-100 text-primary">
-                            <div class="text-center">
-                                <i class="bi bi-speedometer2 fs-3"></i>
+                            <div class="text-center"><i class="bi bi-speedometer2 fs-3"></i>
                                 <div class="fw-bold mt-1">进入总账核对</div>
                             </div>
                         </div>
                     </div>
                 </div>
-
-                <!-- 2. 批次列表 (保持原有逻辑，增加一点样式微调) -->
+                <div class="card flex-shrink-0 mb-3" v-if="dashboardData?.topErrors && Object.keys(dashboardData.topErrors).length > 0">
+                    <div class="card-header bg-white text-danger py-2">
+                        <i class="bi bi-bug-fill me-2"></i>Top 高频错误摘要
+                    </div>
+                    <div class="list-group list-group-flush small">
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-1"
+                             v-for="(count, errorMsg) in dashboardData.topErrors" :key="errorMsg">
+                            <span class="text-truncate" style="max-width: 80%;" :title="errorMsg">{{ errorMsg }}</span>
+                            <span class="badge bg-danger rounded-pill">{{ count }} 次</span>
+                        </div>
+                    </div>
+                </div>
                 <div class="card flex-shrink-0" style="max-height: 40%;">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span><i class="bi bi-collection me-2"></i>批次列表 (OK文件)</span>
-                        <button class="btn btn-sm btn-outline-secondary" @click="fetchBatches"><i class="bi bi-arrow-clockwise"></i></button>
+                        <button class="btn btn-sm btn-outline-secondary" @click="fetchBatches"><i
+                                class="bi bi-arrow-clockwise"></i></button>
                     </div>
                     <div class="table-responsive">
                         <table class="table table-hover table-sm mb-0 align-middle">
                             <thead class="table-light sticky-top">
                             <tr>
-                                <th>ID</th><th>OK文件名</th><th>目标schema</th><th>目标表</th><th>状态</th><th>操作</th>
+                                <th>ID</th>
+                                <th>OK文件名</th>
+                                <th>目标schema</th>
+                                <th>目标表</th>
+                                <th>状态</th>
+                                <th>操作</th>
                             </tr>
                             </thead>
                             <tbody>
-                            <tr v-for="b in batches" :key="b.id"
-                                @click="selectBatch(b)"
-                                class="cursor-pointer"
+                            <tr v-for="b in batches" :key="b.id" @click="selectBatch(b)" class="cursor-pointer"
                                 :class="{'selected-row': selectedBatch?.id === b.id}">
                                 <td>{{ b.id }}</td>
                                 <td>
@@ -223,115 +336,132 @@
                                 <td>{{ b.targetTableName}}</td>
                                 <td>
                                     <span :class="getStatusClass(b.status)">{{ b.status }}</span>
-                                    <div v-if="b.errorMsg" class="text-danger small mt-1 text-truncate" style="max-width: 200px;" :title="b.errorMsg">{{ b.errorMsg }}</div>
+                                    <div v-if="b.errorMsg" class="text-danger small mt-1 text-truncate"
+                                         style="max-width: 200px;" :title="b.errorMsg">{{ b.errorMsg }}
+                                    </div>
                                 </td>
                                 <td>
                                     <div class="btn-group btn-group-sm">
-                                        <button v-if="b.status === 'FAIL_PARSE'" @click.stop="retryBatch(b)" class="btn btn-warning" title="重试解析"><i class="bi bi-arrow-repeat"></i></button>
-                                        <button v-if="b.status !== 'FINISHED'" @click.stop="closeBatch(b)" class="btn btn-success" title="结单"><i class="bi bi-check-circle"></i></button>
+                                        <button v-if="b.status === 'FAIL_PARSE'" @click.stop="retryBatch(b)"
+                                                class="btn btn-warning" title="重试解析"><i
+                                                class="bi bi-arrow-repeat"></i></button>
+                                        <button v-if="b.status !== 'FINISHED'" @click.stop="closeBatch(b)"
+                                                class="btn btn-success" title="结单"><i class="bi bi-check-circle"></i>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
-                            <tr v-if="batches.length === 0"><td colspan="5" class="text-center p-3 text-muted">暂无批次数据</td></tr>
+                            <tr v-if="batches.length === 0">
+                                <td colspan="5" class="text-center p-3 text-muted">暂无批次数据</td>
+                            </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
-                <!-- 3. 文件明细 (保持原有逻辑) -->
                 <div class="card flex-grow-1 d-flex flex-column" v-if="selectedBatch">
                     <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
-                        <span>
-                            <i class="bi bi-file-earmark-spreadsheet me-2"></i>文件明细
-                            <span class="badge bg-secondary ms-2">{{ selectedBatch.tableName }}</span>
-                        </span>
+                        <span><i class="bi bi-file-earmark-spreadsheet me-2"></i>文件明细<span
+                                class="badge bg-secondary ms-2">{{ selectedBatch.tableName }}</span></span>
                         <div>
-                            <span class="small text-muted me-3">第 {{ pageConfig.page + 1 }} / {{ detailsData.totalPages }} 页</span>
+                            <span class="small text-muted me-3">第 {{ pageConfig.page + 1 }} / {{ detailsData?.totalPages || 1 }} 页</span>
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-secondary" :disabled="detailsData.first" @click="changePage(-1)">上一页</button>
-                                <button class="btn btn-outline-secondary" :disabled="detailsData.last" @click="changePage(1)">下一页</button>
+                                <button class="btn btn-outline-secondary"
+                                        :disabled="detailsData?.first !== false || pageConfig.page === 0"
+                                        @click="changePage(-1)">上一页
+                                </button>
+                                <button class="btn btn-outline-secondary" :disabled="detailsData?.last !== false"
+                                        @click="changePage(1)">下一页
+                                </button>
                             </div>
                         </div>
                     </div>
                     <div class="table-responsive flex-grow-1">
                         <table class="table table-hover table-sm mb-0 align-middle">
                             <thead class="table-light">
-                            <tr><th>ID</th><th>源CSV路径</th><th>状态</th><th>进度</th><th>失败行数</th><th>更新时间</th><th>操作</th></tr>
+                            <tr>
+                                <th>ID</th>
+                                <th>源CSV路径</th>
+                                <th>状态</th>
+                                <th>进度</th>
+                                <th>失败行数</th>
+                                <th>更新时间</th>
+                                <th>操作</th>
+                            </tr>
                             </thead>
                             <tbody>
-                            <tr v-for="d in detailsData.content" :key="d.id">
+                            <tr v-for="d in (detailsData?.content || detailsData || [])" :key="d.id">
                                 <td>{{ d.id }}</td>
                                 <td class="small">{{ d.sourceCsvPath }}</td>
                                 <td><span :class="getStatusClass(d.status)">{{ d.status }}</span></td>
                                 <td>
                                     <div class="progress" style="height: 6px; width: 80px;">
-                                        <div class="progress-bar" :class="d.progress===100?'bg-success':'bg-primary'" :style="{width: (d.progress||0)+'%'}"></div>
+                                        <div class="progress-bar" :class="d.progress===100?'bg-success':'bg-primary'"
+                                             :style="{width: (d.progress||0)+'%'}"></div>
                                     </div>
                                 </td>
                                 <td>
-                                    <div v-if="d.transcodeErrorCount > 0" class="d-flex align-items-center text-danger fw-bold">
-                                        <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                                        {{ d.transcodeErrorCount }}
+                                    <div v-if="d.transcodeErrorCount > 0"
+                                         class="d-flex align-items-center text-danger fw-bold"><i
+                                            class="bi bi-exclamation-triangle-fill me-1"></i>{{ d.transcodeErrorCount }}
                                         <button class="btn btn-link btn-sm text-danger p-0 ms-2 text-decoration-none"
-                                                @click.stop="viewBadFile(d)" title="查看失败内容">
-                                            [查看]
+                                                @click.stop="viewBadFile(d)">[查看]
                                         </button>
                                     </div>
                                     <span v-else class="text-muted">-</span>
                                 </td>
                                 <td class="small text-muted">{{ formatTime(d.updateTime) }}</td>
                                 <td>
-                                    <button @click="openSplits(d)" class="btn btn-outline-primary btn-sm py-0 me-1">切片监控</button>
-                                    <button v-if="['FAIL_TRANSCODE','FINISHED_WITH_ERROR'].includes(d.status)" @click="retryTranscode(d)" class="btn btn-outline-warning btn-sm py-0">重试转码</button>
+                                    <button @click.stop.prevent="openSplits(d)"
+                                            class="btn btn-outline-primary btn-sm py-0 me-1">切片监控
+                                    </button>
+                                    <button v-if="['FAIL_TRANSCODE','FINISHED_WITH_ERROR'].includes(d.status)"
+                                            @click.stop.prevent="retryTranscode(d)"
+                                            class="btn btn-outline-warning btn-sm py-0">重试转码
+                                    </button>
                                 </td>
                             </tr>
-                            <tr v-if="detailsData.content.length === 0"><td colspan="6" class="text-center p-4 text-muted">该批次下无 CSV 文件</td></tr>
+                            <tr v-if="!(detailsData?.content || detailsData || []).length">
+                                <td colspan="7" class="text-center p-4 text-muted">该批次下无 CSV 文件</td>
+                            </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
                 <div class="card flex-grow-1 d-flex align-items-center justify-content-center text-muted" v-else>
-                    <div class="text-center">
-                        <i class="bi bi-arrow-up-circle display-6"></i>
-                        <p class="mt-2">请点击上方的批次以查看明细</p>
-                    </div>
+                    <div class="text-center"><i class="bi bi-arrow-up-circle display-6"></i>
+                        <p class="mt-2">请点击上方的批次以查看明细</p></div>
                 </div>
-
             </template>
         </div>
     </div>
-    <!-- 【新增】集群监控视图 -->
+
     <div class="container-fluid p-4 overflow-auto bg-light" v-if="currentView === 'cluster'" style="flex: 1;">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h4 class="text-secondary"><i class="bi bi-server me-2"></i>集群节点状态</h4>
             <div>
                 <span class="text-muted small me-3" v-if="lastClusterRefresh">更新于: {{ formatTime(lastClusterRefresh) }}</span>
-                <button class="btn btn-outline-primary btn-sm me-2" @click="loadClusterStatus">
-                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                <button class="btn btn-outline-primary btn-sm me-2" @click="loadClusterStatus"><i
+                        class="bi bi-arrow-clockwise"></i> 刷新
                 </button>
-                <button class="btn btn-danger btn-sm" @click="showClusterConfigModal = true">
-                    <i class="bi bi-sliders"></i> 全局并发配置
+                <button class="btn btn-danger btn-sm" @click="showClusterConfigModal = true"><i
+                        class="bi bi-sliders"></i> 全局并发配置
                 </button>
             </div>
         </div>
-
         <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 row-cols-xl-4 g-4">
             <div class="col" v-for="node in clusterNodes" :key="node.node">
-                <div class="card h-100 shadow-sm border-0" :class="node.status === 'UP' ? 'border-top border-4 border-success' : 'border-top border-4 border-danger'">
+                <div class="card h-100 shadow-sm border-0"
+                     :class="node.status === 'UP' ? 'border-top border-4 border-success' : 'border-top border-4 border-danger'">
                     <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="card-title mb-0 font-monospace text-dark">{{ node.node }}</h5>
-                            <span class="badge" :class="node.status === 'UP' ? 'bg-success' : 'bg-danger'">
-                                        {{ node.status }}
-                                    </span>
+                        <div class="d-flex justify-content-between align-items-center mb-3"><h5
+                                class="card-title mb-0 font-monospace text-dark">{{ node.node }}</h5><span class="badge"
+                                                                                                           :class="node.status === 'UP' ? 'bg-success' : 'bg-danger'">{{ node.status }}</span>
                         </div>
-
-                        <div v-if="node.status !== 'UP'" class="alert alert-danger py-1 small">
-                            {{ node.error || '连接超时' }}
+                        <div v-if="node.status !== 'UP'" class="alert alert-danger py-1 small">{{ node.error || '连接超时'
+                            }}
                         </div>
-
                         <div v-else>
-                            <!-- 仪表盘数据 (并发限制) -->
                             <div class="row text-center mb-3 g-0 border-bottom pb-2">
                                 <div class="col-6 border-end">
                                     <div class="h4 fw-bold text-primary mb-0">{{ node.config?.load ?? '-' }}</div>
@@ -342,86 +472,61 @@
                                     <div class="small text-muted" style="font-size: 0.75rem;">Verify 线程</div>
                                 </div>
                             </div>
-
                             <div class="px-2">
-                                <!-- 系统资源 -->
-                                <div class="d-flex justify-content-between small mb-1 text-muted">
-                                    <span><i class="bi bi-cpu"></i> CPU</span>
-                                    <span><i class="bi bi-memory"></i> Mem</span>
-                                    <!-- 显示格式: Used / Committed -->
-                                    <span class="text-muted" :title="'最大可用: ' + formatBytes(node.mem?.max)">
-                                            {{ formatBytes(node.mem?.used) }} / {{ formatBytes(node.mem?.committed) }}
-                                        </span>
-                                    <span><i class="bi bi-activity"></i> Threads</span>
+                                <div class="d-flex justify-content-between small mb-1 text-muted"><span><i
+                                        class="bi bi-cpu"></i> CPU</span><span><i
+                                        class="bi bi-memory"></i> Mem</span><span class="text-muted">{{ formatBytes(node.mem?.used) }} / {{ formatBytes(node.mem?.committed) }}</span><span><i
+                                        class="bi bi-activity"></i> Thr</span></div>
+                                <div class="d-flex justify-content-between small fw-bold mb-3 border-bottom pb-2"><span
+                                        :class="getCpuColor(node.cpu)">{{ formatPercent(node.cpu) }}</span><span>{{ formatBytes(node.mem?.used) }}</span><span>{{ node.threads?.toFixed(0) }}</span>
                                 </div>
-                                <div class="d-flex justify-content-between small fw-bold mb-3 border-bottom pb-2">
-                                    <span :class="getCpuColor(node.cpu)">{{ formatPercent(node.cpu) }}</span>
-                                    <span>{{ formatBytes(node.mem?.used) }}</span>
-                                    <span>{{ node.threads?.toFixed(0) }}</span>
-                                </div>
-
-                                <!-- 数据库连接池列表 (支持多个) -->
                                 <div style="max-height: 150px; overflow-y: auto;">
                                     <div v-for="pool in node.pools" :key="pool.name" class="mb-2">
-                                        <div class="d-flex justify-content-between small">
-                                                <span class="text-truncate" style="max-width: 120px;" :title="pool.name">
-                                                    <i class="bi" :class="pool.type==='META'?'bi-database-fill text-secondary':'bi-database text-primary'"></i>
-                                                    {{ pool.name.replace('HikariPool-', '') }}
-                                                </span>
-                                            <span class="text-muted">{{ pool.active }} / {{ pool.max }}</span>
-                                        </div>
-                                        <!-- 进度条 -->
+                                        <div class="d-flex justify-content-between small"><span class="text-truncate"
+                                                                                                style="max-width: 120px;"
+                                                                                                :title="pool.name"><i
+                                                class="bi"
+                                                :class="pool.type==='META'?'bi-database-fill text-secondary':'bi-database text-primary'"></i> {{ pool.name.replace('HikariPool-', '') }}</span><span
+                                                class="text-muted">{{ pool.active }} / {{ pool.max }}</span></div>
                                         <div class="progress mb-2" style="height: 6px;">
-                                            <!-- Used (绿色) -->
-                                            <div class="progress-bar bg-success" role="progressbar"
+                                            <div class="progress-bar bg-success"
                                                  :style="{width: getMemPercent(node.mem) + '%'}"></div>
-                                            <!-- Committed 剩余部分 (浅绿/半透明) -->
-                                            <div class="progress-bar bg-success opacity-25" role="progressbar"
+                                            <div class="progress-bar bg-success opacity-25"
                                                  :style="{width: ((node.mem?.committed - node.mem?.used) / node.mem?.max * 100) + '%'}"></div>
                                         </div>
                                     </div>
-                                    <div v-if="!node.pools || node.pools.length === 0" class="text-center small text-muted my-2">
-                                        无活跃数据库连接
+                                    <div v-if="!node.pools || node.pools.length === 0"
+                                         class="text-center small text-muted my-2">无活跃数据库连接
                                     </div>
                                 </div>
                             </div>
                         </div>
+                    </div>
                 </div>
             </div>
-
-            <!-- 空状态 -->
             <div class="col-12 text-center py-5" v-if="clusterNodes.length === 0">
                 <div class="spinner-border text-primary" role="status"></div>
-                <p class="mt-2 text-muted">正在连接集群...</p>
-            </div>
+                <p class="mt-2 text-muted">正在连接集群...</p></div>
         </div>
     </div>
 
-    <!-- 【新增】集群配置弹窗 -->
     <div class="modal fade show" v-if="showClusterConfigModal" style="display: block; background: rgba(0,0,0,0.5);">
         <div class="modal-dialog">
             <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">🔥 集群并发动态调优</h5>
+                <div class="modal-header"><h5 class="modal-title">🔥 集群并发调优</h5>
                     <button type="button" class="btn-close" @click="showClusterConfigModal = false"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="alert alert-warning d-flex align-items-center">
-                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                        <small>警告：修改将立即广播至所有在线节点！</small>
-                    </div>
                     <form @submit.prevent="applyClusterConfig">
-                        <div class="mb-3">
-                            <label class="form-label fw-bold">Load 任务并发数</label>
-                            <input v-model.number="clusterConfigForm.load" type="number" class="form-control" placeholder="保持不变请留空">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label fw-bold">Verify 任务并发数</label>
-                            <input v-model.number="clusterConfigForm.verify" type="number" class="form-control" placeholder="保持不变请留空">
-                        </div>
+                        <div class="mb-3"><label class="form-label fw-bold">Load 并发</label><input
+                                v-model.number="clusterConfigForm.load" type="number" class="form-control"></div>
+                        <div class="mb-3"><label class="form-label fw-bold">Verify 并发</label><input
+                                v-model.number="clusterConfigForm.verify" type="number" class="form-control"></div>
                         <div class="text-end">
-                            <button type="button" class="btn btn-secondary me-2" @click="showClusterConfigModal = false">取消</button>
-                            <button type="submit" class="btn btn-danger">立即应用</button>
+                            <button type="button" class="btn btn-secondary me-2"
+                                    @click="showClusterConfigModal = false">取消
+                            </button>
+                            <button type="submit" class="btn btn-danger">应用</button>
                         </div>
                     </form>
                 </div>
@@ -429,132 +534,84 @@
         </div>
     </div>
 
-
     <div class="drawer-overlay" v-if="showSplitDrawer" @click="showSplitDrawer = false"></div>
     <div class="drawer" :class="{open: showSplitDrawer}">
         <div class="drawer-header flex-column align-items-stretch gap-2">
             <div class="d-flex justify-content-between align-items-center">
-                <h5 class="mb-0 text-truncate">
-                    <i class="bi bi-layers me-2"></i>切片控制台
-                    <span class="badge bg-secondary ms-2" style="font-size: 0.8rem">Detail ID: {{ selectedDetail?.id }}</span>
-                </h5>
-                <button type="button" class="btn-close" @click="showSplitDrawer = false"></button>
+                <h5 class="mb-0 text-truncate"><i class="bi bi-layers me-2"></i>切片控制台<span class="badge bg-secondary ms-2" style="font-size: 0.8rem">Detail ID: {{ selectedDetail?.id || '-' }}</span></h5><button type="button" class="btn-close" @click="showSplitDrawer = false"></button>
             </div>
 
             <div class="d-flex gap-2 align-items-center">
-                <div class="input-group input-group-sm" style="width: 120px;">
-                    <input type="text" class="form-control" placeholder="切片ID" v-model="splitQuery.id" @keyup.enter="loadSplits">
-                </div>
-
+                <div class="input-group input-group-sm" style="width: 120px;"><input type="text" class="form-control" placeholder="切片ID" v-model="splitQuery.id" @keyup.enter="loadSplits"></div>
                 <select class="form-select form-select-sm" v-model="splitQuery.status" @change="loadSplits" style="width: 140px;">
-                    <option value="">-- 所有状态 --</option>
-                    <option value="FAIL_LOAD,FAIL_VERIFY">⚠️ 所有异常</option>
-                    <option value="FAIL_LOAD">❌ 装载失败</option>
-                    <option value="FAIL_VERIFY">❌ 验证不符</option>
-                    <option value="WAIT_LOAD">⏳ 等待装载</option>
-                    <option value="LOADING">⏳ 装载中</option>
-                    <option value="WAIT_VERIFY">⏳ 等待验证</option>
-                    <option value="VERIFYING">⏳ 验证中</option>
-                    <option value="PASS">✅ 成功 (PASS)</option>
+                    <option value="">-- 所有状态 --</option><option value="FAIL_LOAD,FAIL_VERIFY">⚠️ 所有异常</option><option value="FAIL_LOAD">❌ 装载失败</option><option value="FAIL_VERIFY">❌ 验证不符</option><option value="WAIT_LOAD">⏳ 等待装载</option><option value="LOADING">⏳ 装载中</option><option value="WAIT_VERIFY">⏳ 等待验证</option><option value="VERIFYING">⏳ 验证中</option><option value="PASS">✅ 成功</option>
                 </select>
-
-                <button class="btn btn-sm btn-primary" @click="loadSplits">
-                    <i class="bi bi-search"></i>
-                </button>
-                <button class="btn btn-sm btn-danger ms-2"
-                        @click="batchRetryLoadFailed"
-                        title="批量重试所有装载失败的任务">
-                    <i class="bi bi-lightning-charge-fill"></i> 批量重装
-                </button>
-                <button class="btn btn-sm btn-danger ms-2"
-                        @click="batchRetryVerifyFailed"
-                        title="批量重试所有验证失败的任务">
-                    <i class="bi bi-lightning-charge-fill"></i> 批量重验
-                </button>
+                <button class="btn btn-sm btn-primary" @click="loadSplits"><i class="bi bi-search"></i></button>
+                <button class="btn btn-sm btn-danger ms-2" @click="batchRetryLoadFailed"><i class="bi bi-arrow-repeat"></i> 批量重装</button>
+                <button class="btn btn-sm btn-danger ms-2" @click="batchRetryVerifyFailed"><i class="bi bi-arrow-repeat"></i> 批量重验</button>
             </div>
 
-            <div class="d-flex gap-3 small text-muted border-top pt-2 mt-1">
-                <span>当前显示: {{ splitPage.content.length }} / 总数: {{ splitPage.totalElements }}</span>
+            <div class="d-flex justify-content-between small border-top pt-2 mt-1 px-1 bg-light rounded">
+                <div class="d-flex gap-3">
+                    <span class="fw-bold text-dark">本页: {{ splitStats.total }}</span>
+                    <span class="text-success"><i class="bi bi-check-circle"></i> 通过 {{ splitStats.pass }}</span>
+                    <span class="text-danger"><i class="bi bi-x-circle"></i> 失败 {{ splitStats.fail }}</span>
+                    <span class="text-primary"><i class="bi bi-hourglass-split"></i> 处理中 {{ splitStats.proc }}</span>
+                </div>
+                <div class="d-flex gap-3">
+                    <span class="text-muted fw-bold">总计: {{ totalSplitStats.total }}</span>
+                    <span class="text-success"><i class="bi bi-check-circle"></i> {{ totalSplitStats.pass }}</span>
+                    <span class="text-danger"><i class="bi bi-x-circle"></i> {{ totalSplitStats.fail }}</span>
+                    <span class="text-primary"><i class="bi bi-hourglass-split"></i> {{ totalSplitStats.proc }}</span>
+                </div>
             </div>
         </div>
         <div class="drawer-body p-0">
-            <div class="alert alert-light border-bottom mb-0 small text-muted">
-                <i class="bi bi-info-circle me-1"></i> 源文件: {{ getFileName(selectedDetail?.sourceCsvPath) }}
+            <div class="alert alert-light border-bottom mb-0 small text-muted"><i class="bi bi-info-circle me-1"></i>
+                源文件: {{ getFileName(selectedDetail?.sourceCsvPath) }}
             </div>
             <table class="table table-striped table-hover table-sm mb-0 small align-middle">
-                <thead class="table-light sticky-top">
-                <tr><th>ID</th><th>切片名</th><th>状态/错误</th><th>操作</th></tr>
-                </thead>
+                <thead class="table-light sticky-top"><tr><th>ID</th><th>切片名</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>
-                <tr v-for="s in splitPage.content" :key="s.id">
+                <tr v-for="s in (splitPage?.content || splitPage || [])" :key="s.id">
                     <td>{{ s.id }}</td>
-                    <td>{{ getFileName(s.splitFilePath) }}</td>
+                    <td class="text-truncate" style="max-width: 150px;" :title="getFileName(s.splitFilePath)">{{ getFileName(s.splitFilePath) }}</td>
                     <td>
-                        <div :class="getStatusClass(s.status)" class="badge mb-1">{{ s.status }}</div>
-                        <!-- 快速诊断按钮 -->
-                        <div v-if="s.errorMsg || s.status.includes('FAIL')" class="mt-1">
-                            <button class="btn btn-link btn-xs text-danger p-0 text-decoration-none"
-                                    @click="previewDiagnosis(s)">
-                                <i class="bi bi-bug"></i> 查看原因
-                            </button>
+                        <div :class="getStatusClass(s.status)" class="badge mb-1 d-inline-block text-start" style="width: 95px;">
+                            <i v-if="s.status === 'PASS'" class="bi bi-check-circle"></i>
+                            <i v-else-if="s.status && s.status.includes('FAIL')" class="bi bi-x-circle"></i>
+                            <i v-else class="bi bi-hourglass-split"></i>
+                            {{ s.status }}
+                        </div>
+
+                        <div v-if="s.errorMsg || (s.status && s.status.includes('FAIL'))" class="mt-1">
+                            <button class="btn btn-link btn-xs text-danger p-0 text-decoration-none" @click="previewDiagnosis(s)"><i class="bi bi-bug"></i> 查看原因</button>
                         </div>
                     </td>
                     <td>
-                        <div class="d-flex gap-1 flex-wrap">
-                            <button @click="downloadSplit(s)"
-                                    class="btn btn-outline-primary btn-xs w-100 mb-1"
-                                    title="下载到本地">
-                                <i class="bi bi-download"></i> 下载
-                            </button>
-
-                            <button v-if="s.status === 'FAIL_LOAD'"
-                                    @click="retrySplit(s)"
-                                    class="btn btn-warning btn-xs w-100 mb-1">
-                                <i class="bi bi-arrow-repeat"></i> 重试加载
-                            </button>
-
-                            <div v-if="s.status === 'FAIL_VERIFY'" class="d-flex gap-1 mb-1">
-                                <button @click="reVerifySplit(s)"
-                                        class="btn btn-info btn-xs flex-grow-1" title="仅重新运行比对">
-                                    重验
-                                </button>
-                                <button @click="retrySplit(s)"
-                                        class="btn btn-outline-warning btn-xs" title="删除数据重新装载">
-                                    重载
-                                </button>
+                        <div class="d-flex gap-1 flex-wrap" style="max-width: 140px;">
+                            <button @click="downloadSplit(s)" class="btn btn-outline-primary btn-xs flex-grow-1 mb-1"><i class="bi bi-download"></i> 下载</button>
+                            <button v-if="s.status === 'FAIL_LOAD'" @click="retrySplit(s)" class="btn btn-warning btn-xs flex-grow-1 mb-1"><i class="bi bi-arrow-repeat"></i> 重载</button>
+                            <div v-if="s.status === 'FAIL_VERIFY'" class="d-flex gap-1 mb-1 w-100">
+                                <button @click="reVerifySplit(s)" class="btn btn-info btn-xs w-50">重验</button>
+                                <button @click="retrySplit(s)" class="btn btn-outline-warning btn-xs w-50">重载</button>
                             </div>
-
-                            <button v-if="s.status === 'PASS'"
-                                    @click="reVerifySplit(s)"
-                                    class="btn btn-outline-secondary btn-xs w-100 mb-1">
-                                <i class="bi bi-search"></i> 复核
-                            </button>
-
-                            <button v-if="s.status === 'FAIL_VERIFY'"
-                                    @click="viewDiff(s)"
-                                    class="btn btn-danger btn-xs w-100">
-                                查看差异
-                            </button>
+                            <button v-if="s.status === 'PASS'" @click="reVerifySplit(s)" class="btn btn-outline-secondary btn-xs flex-grow-1 mb-1"><i class="bi bi-search"></i> 复核</button>
+                            <button v-if="s.status === 'FAIL_VERIFY'" @click="viewDiff(s)" class="btn btn-danger btn-xs flex-grow-1">看差异</button>
                         </div>
                     </td>
                 </tr>
-
-                <tr v-if="!splitPage.content || splitPage.content.length === 0">
-                    <td colspan="4" class="text-center text-muted p-3">
-                        没有找到符合条件的切片数据
-                    </td>
-                </tr>
+                <tr v-if="!(splitPage?.content || splitPage || []).length"><td colspan="4" class="text-center text-muted p-4"><i class="bi bi-inbox fs-4 d-block mb-2"></i>暂无切片</td></tr>
                 </tbody>
             </table>
-
             <div class="p-2 border-top bg-light d-flex justify-content-between align-items-center">
                 <button class="btn btn-sm btn-outline-secondary"
-                        :disabled="splitPage.first"
-                        @click="changeSplitPage(-1)">上一页</button>
-                <span class="small">第 {{ splitPage.number + 1 }} / {{ splitPage.totalPages }} 页</span>
-                <button class="btn btn-sm btn-outline-secondary"
-                        :disabled="splitPage.last"
-                        @click="changeSplitPage(1)">下一页</button>
+                        :disabled="splitPage?.first !== false || splitQuery.page === 0" @click="changeSplitPage(-1)">上一页
+                </button>
+                <span class="small">第 {{ splitQuery.page + 1 }} / {{ splitPage?.totalPages || 1 }} 页</span>
+                <button class="btn btn-sm btn-outline-secondary" :disabled="splitPage?.last !== false"
+                        @click="changeSplitPage(1)">下一页
+                </button>
             </div>
         </div>
     </div>
@@ -562,8 +619,7 @@
     <div class="modal fade show" v-if="showDiffModal" style="display: block; background: rgba(0,0,0,0.5);">
         <div class="modal-dialog modal-lg modal-dialog-centered diff-modal">
             <div class="modal-content">
-                <div class="modal-header py-2">
-                    <h5 class="modal-title fs-6">⚖️ 数据比对差异 (Top 200 行)</h5>
+                <div class="modal-header py-2"><h5 class="modal-title fs-6">⚖️ 数据差异</h5>
                     <button type="button" class="btn-close" @click="showDiffModal = false"></button>
                 </div>
                 <div class="modal-body p-0">
@@ -572,57 +628,23 @@
             </div>
         </div>
     </div>
-
     <div class="modal fade show" v-if="showCreateJobModal" style="display: block; background: rgba(0,0,0,0.5);">
         <div class="modal-dialog">
             <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">新建迁移作业</h5>
+                <div class="modal-header"><h5 class="modal-title">新建作业</h5>
                     <button type="button" class="btn-close" @click="showCreateJobModal = false"></button>
                 </div>
                 <div class="modal-body">
-                    <div v-if="createJobError" class="alert alert-danger py-2 small d-flex align-items-center">
-                        <i class="bi bi-exclamation-circle-fill me-2"></i>
-                        <span class="text-break">{{ createJobError }}</span>
-                    </div>
-
                     <form @submit.prevent="submitCreateJob">
-                        <div class="mb-3">
-                            <label class="form-label small">作业名称</label>
-                            <input v-model="newJob.name" type="text" class="form-control" required>
+                        <div class="mb-3"><label>名称</label><input v-model="newJob.name" class="form-control" required>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label small">监控源目录</label>
-                            <input v-model="newJob.sourceDirectory" type="text" class="form-control" placeholder="/data/..." required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small">输出目录</label>
-                            <input v-model="newJob.outDirectory" type="text" class="form-control" placeholder="/outdata/..." required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small">目标schema</label>
-                            <input v-model="newJob.targetSchema" type="text" class="form-control form-control-sm">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small">目标库host</label>
-                            <input v-model="newJob.targetDbHost" type="text" class="form-control form-control-sm">
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label small">目标库端口</label>
-                            <input v-model="newJob.targetDbPort" type="text" class="form-control form-control-sm">
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col">
-                                <label class="form-label small">用户</label>
-                                <input v-model="newJob.targetDbUser" type="text" class="form-control form-control-sm">
-                            </div>
-                            <div class="col">
-                                <label class="form-label small">密码</label>
-                                <input v-model="newJob.targetDbPass" type="password" class="form-control form-control-sm">
-                            </div>
-                        </div>
+                        <div class="mb-3"><label>源目录</label><input v-model="newJob.sourceDirectory"
+                                                                      class="form-control" required></div>
+                        <div class="mb-3"><label>输出目录</label><input v-model="newJob.outDirectory"
+                                                                        class="form-control" required></div>
                         <div class="text-end">
-                            <button type="button" class="btn btn-light me-2" @click="showCreateJobModal = false">取消</button>
+                            <button type="button" class="btn btn-light" @click="showCreateJobModal = false">取消
+                            </button>
                             <button type="submit" class="btn btn-primary">提交</button>
                         </div>
                     </form>
@@ -630,674 +652,403 @@
             </div>
         </div>
     </div>
-
-    <div v-if="showVerifyModal" class="modal fade show" style="display: block; background: rgba(0,0,0,0.5);" tabindex="-1">
-        <div class="modal-dialog modal-xl"> <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="bi bi-speedometer2"></i> 全局一致性核对报告 (Global Reconciliation)
-                </h5>
-                <button type="button" class="btn-close" @click="showVerifyModal = false"></button>
-            </div>
-
-            <div class="modal-body">
-                <div v-if="verifyLoading" class="text-center py-5">
-                    <div class="spinner-border text-primary" role="status"></div>
-                    <p class="mt-2 text-muted">正在进行全库扫描与行数比对，请耐心等待...</p>
+    <div v-if="showVerifyModal" class="modal fade show" style="display: block; background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title"><i class="bi bi-speedometer2"></i> 总账核对</h5>
+                    <button type="button" class="btn-close" @click="showVerifyModal = false"></button>
                 </div>
-
-                <div v-else>
-                    <div class="alert alert-info small">
-                        <i class="bi bi-info-circle-fill"></i>
-                        核对逻辑：<strong>源端行数</strong> (IBM CSV汇总) vs <strong>切片行数</strong> (UTF-8汇总) vs <strong>目标库行数</strong> (DB Count)
+                <div class="modal-body">
+                    <div v-if="verifyLoading" class="text-center py-5">
+                        <div class="spinner-border text-primary"></div>
                     </div>
-
-                    <table class="table table-bordered table-hover align-middle">
-                        <thead class="table-light">
-                        <tr>
-                            <th>目标表 (Schema.Table)</th>
-                            <th>状态</th>
-                            <th class="text-end">源端行数 (IBM)</th>
-                            <th class="text-end">切片行数 (UTF-8)</th>
-                            <th class="text-end">目标库行数 (DB)</th>
-                            <th class="text-end">差异 (Target - Source)</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        <tr v-for="item in verifyResults" :key="item.tableName"
-                            :class="{'table-success': item.status === 'MATCH', 'table-danger': item.status !== 'MATCH'}">
-
-                            <td class="fw-bold">{{ item.tableName }}</td>
-
-                            <td>
-                                    <span v-if="item.status === 'MATCH'" class="badge bg-success">
-                                        <i class="bi bi-check-circle"></i> 一致
-                                    </span>
-                                <span v-else-if="item.status === 'MISMATCH_SPLIT'" class="badge bg-warning text-dark">
-                                        <i class="bi bi-exclamation-triangle"></i> 转码丢失
-                                    </span>
-                                <span v-else-if="item.status === 'MISMATCH_LOAD'" class="badge bg-danger">
-                                        <i class="bi bi-x-circle"></i> 入库丢失
-                                    </span>
-                                <span v-else class="badge bg-secondary">{{ item.status }}</span>
-                            </td>
-
-                            <td class="text-end font-monospace">{{ item.sourceRowCount?.toLocaleString() }}</td>
-                            <td class="text-end font-monospace">{{ item.splitRowCount?.toLocaleString() }}</td>
-                            <td class="text-end font-monospace">{{ item.targetRowCount?.toLocaleString() }}</td>
-
-                            <td class="text-end fw-bold"
-                                :class="{'text-danger': (item.targetRowCount - item.sourceRowCount) !== 0, 'text-success': (item.targetRowCount - item.sourceRowCount) === 0}">
-                                {{ (item.targetRowCount - item.sourceRowCount) > 0 ? '+' : '' }}{{ (item.targetRowCount - item.sourceRowCount).toLocaleString() }}
-                            </td>
-                        </tr>
-
-                        <tr v-if="verifyResults.length === 0">
-                            <td colspan="6" class="text-center text-muted py-3">暂无核对数据</td>
-                        </tr>
-                        </tbody>
-                    </table>
+                    <div v-else>
+                        <table class="table table-bordered">
+                            <thead>
+                            <tr>
+                                <th>表</th>
+                                <th>状态</th>
+                                <th>源行数</th>
+                                <th>目标行数</th>
+                                <th>差异</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="item in verifyResults" :key="item.tableName">
+                                <td>{{ item.tableName }}</td>
+                                <td>{{ item.status }}</td>
+                                <td>{{ item.sourceRowCount }}</td>
+                                <td>{{ item.targetRowCount }}</td>
+                                <td>{{ item.targetRowCount - item.sourceRowCount }}</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
-
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" @click="showVerifyModal = false">关闭</button>
-                <button type="button" class="btn btn-primary" @click="globalVerify(currentVerifyJobId)" :disabled="verifyLoading">
-                    <i class="bi bi-arrow-repeat"></i> 重新核对
-                </button>
-            </div>
-        </div>
         </div>
     </div>
-
-    <!-- 新增：诊断预览 Modal (轻量级) -->
     <div class="modal fade show" v-if="showDiagnosisModal" style="display: block; background: rgba(0,0,0,0.5);">
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-header bg-danger text-white py-2">
-                    <h6 class="modal-title"><i class="bi bi-activity"></i> 故障诊断 (Split {{ currentDiagnosisSplit?.id }})</h6>
-                    <button type="button" class="btn-close btn-close-white" @click="showDiagnosisModal = false"></button>
+                <div class="modal-header bg-danger text-white py-2"><h6 class="modal-title"><i
+                        class="bi bi-activity"></i> 故障诊断</h6>
+                    <button type="button" class="btn-close btn-close-white"
+                            @click="showDiagnosisModal = false"></button>
                 </div>
                 <div class="modal-body bg-light p-0">
-                    <div class="p-2 border-bottom bg-white small">
-                        <strong>文件:</strong> {{ currentDiagnosisSplit?.splitFilePath }}
-                    </div>
                     <pre class="p-3 mb-0 text-danger" style="max-height: 50vh; overflow: auto; font-size: 0.85rem;">{{ diagnosisContent }}</pre>
-                </div>
-                <div class="modal-footer py-1">
-                    <button class="btn btn-sm btn-outline-secondary" @click="downloadSplit(currentDiagnosisSplit)">
-                        <i class="bi bi-download"></i> 下载原始文件
-                    </button>
-                    <button class="btn btn-sm btn-secondary" @click="showDiagnosisModal = false">关闭</button>
                 </div>
             </div>
         </div>
     </div>
 </div>
-
-
 <script>
-    const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
+    const {createApp, ref, reactive, computed, onMounted, onUnmounted, watch} = Vue;
     const API_BASE = window.location.origin + '/api/migration';
 
-    // 【新增】Axios 请求拦截器：自动给所有 GET 请求加时间戳
     axios.interceptors.request.use(config => {
         if (config.method === 'get') {
-            // 如果 params 不存在，初始化为空对象
             config.params = config.params || {};
-            // 添加 _t 参数，值为当前时间戳
             config.params['_t'] = new Date().getTime();
         }
         return config;
-    }, error => {
-        return Promise.reject(error);
     });
 
-    createApp({
+    const app = createApp({
         setup() {
-            // --- 状态数据 ---
             const jobs = ref([]);
             const batches = ref([]);
-            const detailsData = ref({ content: [], totalPages: 0, first: true, last: true });
+            const detailsData = ref({content: [], totalPages: 0, first: true, last: true});
             const splits = ref([]);
-
             const selectedJob = ref(null);
             const selectedBatch = ref(null);
             const selectedDetail = ref(null);
-
             const jobSearch = ref('');
             const loadingJobs = ref(false);
             const autoRefresh = ref(true);
-            const pageConfig = reactive({ page: 0, size: 10 });
-
-            // UI 开关
+            const pageConfig = reactive({page: 0, size: 10});
             const showCreateJobModal = ref(false);
             const showSplitDrawer = ref(false);
             const showDiffModal = ref(false);
             const diffContent = ref('');
-            const newJob = reactive({ name: '', sourceDirectory: '', targetDbUrl: '', targetDbUser: 'root', targetDbPass: '' });
-            // 【新增】用于存储新建作业时的报错信息
+            const newJob = reactive({
+                name: '',
+                sourceDirectory: '',
+                targetDbUrl: '',
+                targetDbUser: 'root',
+                targetDbPass: ''
+            });
             const createJobError = ref('');
-
             let timer = null;
-            // 新增一个响应式变量
             const filterErrorOnly = ref(false);
-
-            // --- 【新增】总账核对相关的响应式变量 ---
-            const showVerifyModal = ref(false);       // 控制弹窗显示
-            const verifyLoading = ref(false);         // 控制加载转圈
-            const verifyResults = ref([]);            // 存储后端返回的核对结果列表
-            const currentVerifyJobId = ref(null);     // 记录当前正在核对哪个 Job
-
-            // 【新增】集群视图相关的状态
-            const currentView = ref('jobs'); // 'jobs' | 'cluster'
+            const showVerifyModal = ref(false);
+            const verifyLoading = ref(false);
+            const verifyResults = ref([]);
+            const currentVerifyJobId = ref(null);
+            const currentView = ref('jobs');
             const clusterNodes = ref([]);
             const lastClusterRefresh = ref(null);
             const showClusterConfigModal = ref(false);
-            const clusterConfigForm = reactive({ load: null, verify: null });
-
-            // 【新增】切片分页数据容器
-            const splitPage = ref({
-                content: [],
-                totalElements: 0,
-                totalPages: 0,
-                number: 0,
-                first: true,
-                last: true
-            });
-            // 【新增】切片查询条件
-            const splitQuery = reactive({
-                id: '',
-                status: '',
-                page: 0,
-                size: 20
-            });
-
-            const dashboardData = ref({}); // 存储 Dashboard 数据
+            const clusterConfigForm = reactive({load: null, verify: null});
+            const splitPage = ref({content: [], totalElements: 0, totalPages: 0, number: 0, first: true, last: true});
+            const splitQuery = reactive({id: '', status: '', page: 0, size: 10});
+            const totalSplitStats = ref({ pass: 0, fail: 0, proc: 0, total: 0 });
+            const dashboardData = ref({});
             const showDiagnosisModal = ref(false);
             const diagnosisContent = ref('');
             const currentDiagnosisSplit = ref(null);
 
-            // 获取 Dashboard 数据
             const loadDashboard = async () => {
                 if (!selectedJob.value) return;
-                // 注意：这里需要后端实现 /job/{id}/dashboard 接口
-                // 如果后端还没好，可以先注释掉或用 mock
                 try {
-                    // const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/dashboard`);
-                    // dashboardData.value = res.data;
-
-                    // Mock 数据演示：
-                    dashboardData.value = {
-                        statusCounts: { 'FAIL_LOAD': 2, 'FAIL_VERIFY': 5 }
-                    };
-                } catch(e) { console.warn("Dashboard load failed", e); }
+                    const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/dashboard`);
+                    dashboardData.value = res.data;
+                } catch(e) {
+                    console.error("加载看板数据失败", e);
+                }
             };
-
             const previewDiagnosis = async (split) => {
                 currentDiagnosisSplit.value = split;
-                diagnosisContent.value = "正在获取日志...";
+                diagnosisContent.value = "获取中...";
                 showDiagnosisModal.value = true;
                 try {
                     const res = await axios.get(`${API_BASE}/split/${split.id}/diagnosis-preview`);
                     diagnosisContent.value = res.data;
                 } catch (e) {
-                    diagnosisContent.value = "无法获取诊断信息: " + e.message;
+                    diagnosisContent.value = "失败: " + e.message;
                 }
             };
-
-            // --- 核心数据获取 ---
             const loadJobs = async () => {
                 loadingJobs.value = true;
                 try {
                     const res = await axios.get(`${API_BASE}/jobs`);
                     jobs.value = res.data;
-                } finally { loadingJobs.value = false; }
+                } finally {
+                    loadingJobs.value = false;
+                }
             };
-
             const fetchBatches = async () => {
                 if (!selectedJob.value) return;
                 const res = await axios.get(`${API_BASE}/job/${selectedJob.value.id}/batches`);
                 batches.value = res.data;
             };
-
-
             const viewBadFile = async (detail) => {
                 try {
                     const res = await axios.get(`${API_BASE}/detail/${detail.id}/bad-content`);
                     diffContent.value = res.data;
-                    showDiffModal.value = true; // 复用差异查看的弹窗
-                } catch(e) {
-                    alert("无法读取失败文件: " + (e.response?.data || e.message));
+                    showDiffModal.value = true;
+                } catch (e) {
+                    alert("读取失败");
+                }
+            };
+            const fetchDetails = async () => {
+                if (!selectedBatch.value) return;
+                try {
+                    const res = await axios.get(`${API_BASE}/batch/${selectedBatch.value.id}/details`, {
+                        params: {
+                            page: pageConfig.page,
+                            size: pageConfig.size
+                        }
+                    });
+                    detailsData.value = res.data;
+                } catch (e) {
                 }
             };
 
-            const fetchDetails = async () => {
-                // 1. 必须先选中批次
-                if (!selectedBatch.value) return;
-                // 注意：这里需要后端支持根据 qianyiId (batchId) 查询
-                // 假设后端接口已按建议修改为: /api/migration/batch/{batchId}/details?page=0&size=10
-                // 如果暂时没有，可以用 /job/{id}/details 但需要前端过滤 (不推荐，数据量大)
-                // 这里按最佳实践调用：
-                try {
-                    // 假设后端接口: GET /api/migration/job/{jobId}/details?page=..&size=.. (返回的是全部)
-                    // 为了演示分页，我们暂时调用 Job 级别的分页接口 (因为之前没定义 Batch 级别的分页接口)
-                    // TODO: 生产环境建议实现 /api/migration/batch/{batchId}/details
-                    const res = await axios.get(`${API_BASE}/batch/${selectedBatch.value.id}/details`, {
-                        params: { page: pageConfig.page, size: pageConfig.size }
-                    });
-
-                    // 前端临时过滤: 只显示属于当前 Batch 的 (实际应由后端做)
-                    // 由于后端返回的是 Page 对象，前端过滤会导致页码不对。
-                    // 此处假设后端返回的数据就是我们要的，或者后端加了 qianyiId 参数
-                    // 演示代码直接使用返回结果
-                    detailsData.value = res.data;
-                } catch(e) { console.error("加载明细失败", e); }
-            };
-
-            // --- 交互动作 ---
             const selectJob = (job) => {
                 selectedJob.value = job;
                 selectedBatch.value = null;
                 selectedDetail.value = null;
                 batches.value = [];
-                detailsData.value = { content: [] };
+                detailsData.value = {content: []};
                 fetchBatches();
-
-                loadDashboard(); // 加载 Dashboard
-                fetchBatches();
+                loadDashboard();
             };
-
             const selectBatch = (batch) => {
                 selectedBatch.value = batch;
-                pageConfig.page = 0; // 切换批次时重置页码
+                pageConfig.page = 0;
                 fetchDetails();
             };
-
             const changePage = (delta) => {
                 pageConfig.page += delta;
                 fetchDetails();
             };
-
-            // --- 业务操作 ---
             const openCreateModal = () => {
-                createJobError.value = ''; // 每次打开弹窗先清空错误
-                // 重置表单数据（可选）
-                Object.assign(newJob, { name: '', sourceDirectory: '', targetDbUrl: '', targetDbUser: 'root', targetDbPass: '' });
+                createJobError.value = '';
+                Object.assign(newJob, {
+                    name: '',
+                    sourceDirectory: '',
+                    targetDbUrl: '',
+                    targetDbUser: 'root',
+                    targetDbPass: ''
+                });
                 showCreateJobModal.value = true;
             };
-
             const submitCreateJob = async () => {
-                createJobError.value = ''; // 提交前先清空旧错误
+                createJobError.value = '';
                 try {
                     await axios.post(`${API_BASE}/job/create`, newJob);
-
-                    // 成功后关闭弹窗并刷新列表
                     showCreateJobModal.value = false;
                     loadJobs();
-                } catch(e) {
-                    // 【关键修复】提取后端返回的具体错误信息
-                    // Spring Boot 的 ResponseEntity.badRequest().body("错误信息") 会放在 e.response.data 中
-                    const errorMsg = e.response?.data || e.message || "未知网络错误";
-                    createJobError.value = errorMsg;
-
-                    // 注意：这里不要关闭弹窗 (showCreateJobModal.value = false)，
-                    // 这样用户可以看到错误并修改表单
+                } catch (e) {
+                    createJobError.value = e.response?.data || e.message;
                 }
             };
-
             const jobAction = async (job, action) => {
-                if(!confirm(`确认${action === 'stop' ? '停止' : '恢复'}该作业吗？`)) return;
+                if (!confirm('确认?')) return;
                 await axios.post(`${API_BASE}/job/${job.id}/action?action=${action}`);
                 loadJobs();
             };
-
             const retryBatch = async (batch) => {
-                if(!confirm('确定要重试此批次吗？这将删除所有相关明细并重新扫描。')) return;
-                try {
-                    await axios.post(`${API_BASE}/batch/${batch.id}/retry`);
-                    fetchBatches();
-                } catch(e) {
-                    const errorMsg = e.response?.data || e.message || "操作失败";
-                    alert("无法结单: " + errorMsg);
-                }
+                if (!confirm('确认?')) return;
+                await axios.post(`${API_BASE}/batch/${batch.id}/retry`);
+                fetchBatches();
             };
-
             const closeBatch = async (batch) => {
-                if(!confirm(`确定要对批次 [${getFileName(batch.okFilePath)}] 进行结单吗？\n\n注意：结单后可能(根据配置)自动清理所有临时切片、日志和差异文件以释放磁盘空间，此操作不可逆！`)) return;
-
+                if (!confirm('确认结单?')) return;
                 try {
-                    // 1. 发送请求
                     await axios.post(`${API_BASE}/batch/${batch.id}/close`);
-                    // 2. 成功提示 (可选)
-                    alert("结单成功，后台正在清理磁盘文件...");
-                    // 3. 刷新列表 (只有成功了才刷新)
                     fetchBatches();
-                } catch(e) {
-                    // e.response.data 就是您后端 ResponseEntity.body("...") 里的内容
-                    const errorMsg = e.response?.data || e.message || "操作失败";
-                    // 4. 弹窗显示具体错误原因
-                    alert("无法结单: " + errorMsg);
+                } catch (e) {
+                    alert("失败: " + (e.response?.data || e.message));
                 }
             };
-
             const retryTranscode = async (detail) => {
                 await axios.post(`${API_BASE}/detail/${detail.id}/retry-transcode`);
-                try {
-                    fetchDetails();
-                } catch(e) {
-                    const errorMsg = e.response?.data || e.message || "操作失败";
-                    alert("无法结单: " + errorMsg);
-                }
+                fetchDetails();
             };
-
-            // --- 新增：下载切片文件逻辑 ---
             const downloadSplit = async (split) => {
                 try {
-                    // 简单的用户提示，虽然浏览器也会显示下载进度
-                    // 如果您想加个 loading 状态，可以在这里设一个 ref
-
-                    const response = await axios.get(`${API_BASE}/split/${split.id}/download`, {
-                        responseType: 'blob' // 【关键】必须设置为 blob
-                    });
-
-                    // 1. 尝试从 Header 获取文件名
-                    // 后端 Header 格式: Content-Disposition: attachment; filename="split_123.csv"
-                    const disposition = response.headers['content-disposition'];
-                    let filename = `split_${split.id}.csv`; // 默认保底文件名
-
-                    if (disposition && disposition.indexOf('attachment') !== -1) {
-                        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-                        const matches = filenameRegex.exec(disposition);
-                        if (matches != null && matches[1]) {
-                            filename = matches[1].replace(/['"]/g, '');
-                        }
-                    }
-
-                    // 2. 创建 Blob URL 并触发浏览器下载
-                    const blob = new Blob([response.data], { type: 'text/csv' });
-                    const url = window.URL.createObjectURL(blob);
-
+                    const res = await axios.get(`${API_BASE}/split/${split.id}/download`, {responseType: 'blob'});
+                    const url = window.URL.createObjectURL(new Blob([res.data]));
                     const link = document.createElement('a');
                     link.href = url;
-                    link.setAttribute('download', filename);
+                    link.setAttribute('download', `split_${split.id}.csv`);
                     document.body.appendChild(link);
                     link.click();
-
-                    // 3. 清理内存
-                    document.body.removeChild(link);
-                    window.URL.revokeObjectURL(url);
-
-                } catch (error) {
-                    console.error("下载失败", error);
-
-                    // 【关键错误处理】因为 responseType 是 blob，如果后端报错（比如返回JSON格式的错误信息），
-                    // 我们需要把 blob 转回文本才能看到报错内容
-                    if (error.response && error.response.data instanceof Blob) {
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            const errorText = reader.result;
-                            alert("下载失败: " + (errorText || "服务器内部错误"));
-                        };
-                        reader.readAsText(error.response.data);
-                    } else {
-                        alert("下载失败，请检查网络或日志");
-                    }
+                    link.remove();
+                } catch (e) {
+                    alert("下载失败");
                 }
             };
-
-            // 1. 重试加载 (对应后端 /retry 接口，通常重置为 WAIT_LOAD)
             const retrySplit = async (split) => {
-                if(!confirm('确定要重试加载吗？(将删除旧数据并重新LOAD)')) return;
-                try {
-                    await axios.post(`${API_BASE}/split/${split.id}/retry`);
-                    // 乐观更新：根据当前状态判断下一步
-                    if (split.status === 'FAIL_LOAD') {
-                        split.status = 'WAIT_LOAD';
-                    } else {
-                        // 如果是其他状态(如 FAIL_TRANSCODE)，通常也是回到 WAIT_LOAD 或 NEW
-                        split.status = 'WAIT_LOAD';
-                    }
-                    split.errorMsg = '';
-                } catch(e) { alert("操作失败"); }
+                if (!confirm('确定?')) return;
+                await axios.post(`${API_BASE}/split/${split.id}/retry`);
+                split.status = 'WAIT_LOAD';
             };
-
-            // 2. 重新验证 (对应后端 /reverify 接口，重置为 WAIT_VERIFY)
-            // 覆盖 FAIL_VERIFY 和 PASS 两种情况
             const reVerifySplit = async (split) => {
-                if(!confirm('确定要重新校验吗？(仅比对，不重新加载)')) return;
-
-                try {
-                    await axios.post(`${API_BASE}/split/${split.id}/reverify`);
-                    // 乐观更新 UI：让用户立刻看到状态变了
-                    split.status = 'WAIT_VERIFY';
-                    split.errorMsg = ''; // 清空错误显示
-                } catch(e) {
-                    alert("操作失败: " + (e.response?.data || e.message));
-                }
+                if (!confirm('确定?')) return;
+                await axios.post(`${API_BASE}/split/${split.id}/reverify`);
+                split.status = 'WAIT_VERIFY';
             };
-
             const viewDiff = async (split) => {
                 try {
                     const res = await axios.get(`${API_BASE}/split/${split.id}/diff-content`);
                     diffContent.value = res.data;
                     showDiffModal.value = true;
-                } catch(e) { alert("无法读取差异文件"); }
+                } catch (e) {
+                }
             };
 
-            // 加载切片数据 (核心方法)
-            // 【新增】核心加载方法：调用后端搜索接口
             const loadSplits = async () => {
                 if (!selectedDetail.value) return;
-
                 try {
-                    // 构造查询参数
-                    const params = {
-                        page: splitQuery.page,
-                        size: splitQuery.size,
-                        // 如果输入框是空的，就不传这个参数，后端会忽略
-                        splitId: splitQuery.id || undefined,
-                        status: splitQuery.status || undefined
-                    };
-
-                    // 调用刚才定义的后端新接口
-                    const res = await axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits/search`, { params });
+                    const res = await axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits/search`, {
+                        params: {
+                            page: splitQuery.page,
+                            size: splitQuery.size,
+                            splitId: splitQuery.id || undefined,
+                            status: splitQuery.status || undefined
+                        }
+                    });
                     splitPage.value = res.data;
-                } catch(e) {
-                    console.error(e);
-                    alert("加载切片数据失败，请检查后端接口是否更新");
+
+                    // 【新增】顺便获取全局状态统计
+                    const statsRes = await axios.get(`${API_BASE}/detail/${selectedDetail.value.id}/splits/stats`);
+                    totalSplitStats.value = statsRes.data;
+                } catch (e) {
                 }
             };
-
+            // 【新增】实时计算当前显示数据的状态分布
+            const splitStats = computed(() => {
+                const list = splitPage.value?.content || splitPage.value || [];
+                let pass = 0, fail = 0, proc = 0;
+                list.forEach(s => {
+                    if (s.status === 'PASS') pass++;
+                    else if (s.status && s.status.includes('FAIL')) fail++;
+                    else proc++;
+                });
+                return { pass, fail, proc, total: list.length };
+            });
             const batchRetryLoadFailed = async () => {
-                if (!selectedDetail.value) return;
-
-                // 简单的二次确认
-                if (!confirm(`确定要尝试批量修复该文件下的所有失败切片吗？\n这将在后台排队执行。`)) return;
-
-                try {
-                    const res = await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-load`);
-                    alert(res.data); // "已触发 20 个切片的后台重试任务"
-
-                    // 刷新一下列表
+                if (confirm('批量重载?')) {
+                    await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-load`);
                     loadSplits();
-                } catch (e) {
-                    alert("操作失败: " + (e.response?.data || e.message));
                 }
             };
-
             const batchRetryVerifyFailed = async () => {
-                if (!selectedDetail.value) return;
-
-                // 简单的二次确认
-                if (!confirm(`确定要尝试批量验证该文件下的所有失败切片吗？\n这将在后台排队执行。`)) return;
-
-                try {
-                    const res = await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-verify`);
-                    alert(res.data); // "已触发 20 个切片的后台重试任务"
-
-                    // 刷新一下列表
+                if (confirm('批量重验?')) {
+                    await axios.post(`${API_BASE}/detail/${selectedDetail.value.id}/batch-retry-verify`);
                     loadSplits();
-                } catch (e) {
-                    alert("操作失败: " + (e.response?.data || e.message));
                 }
             };
-
             const globalVerify = async (jobId) => {
-                if (!jobId) {
-                    alert("未获取到作业ID");
-                    return;
-                }
-
-                currentVerifyJobId.value = jobId; // 记录ID以便"重新核对"按钮使用
-                showVerifyModal.value = true;     // 打开弹窗
-                verifyLoading.value = true;       // 开始转圈
-                verifyResults.value = [];         // 清空旧数据
-
+                currentVerifyJobId.value = jobId;
+                showVerifyModal.value = true;
+                verifyLoading.value = true;
                 try {
-                    // 调用后端接口 (注意：这里用的是 POST)
                     const res = await axios.post(`${API_BASE}/job/${jobId}/global-verify`);
                     verifyResults.value = res.data;
-                } catch(e) {
-                    console.error(e);
-                    const errorMsg = e.response?.data || e.message || "未知错误";
-                    alert("核对请求失败: " + errorMsg);
-                    showVerifyModal.value = false; // 出错关闭弹窗
+                } catch (e) {
+                    showVerifyModal.value = false;
                 } finally {
-                    verifyLoading.value = false;   // 停止转圈
+                    verifyLoading.value = false;
                 }
             };
 
-            // 【修改】打开抽屉的方法 (替换原来的 openSplits)
             const openSplits = (detail) => {
                 selectedDetail.value = detail;
                 showSplitDrawer.value = true;
-
-                // 重置查询条件
                 splitQuery.id = '';
                 splitQuery.status = '';
                 splitQuery.page = 0;
-
-                // 加载第一页
                 loadSplits();
             };
-
-            // 【新增】切片翻页
             const changeSplitPage = (delta) => {
                 splitQuery.page += delta;
                 loadSplits();
             };
 
-            // --- 工具函数 ---
             const filteredJobs = computed(() => {
-                if(!jobSearch.value) return jobs.value;
+                if (!jobSearch.value) return jobs.value;
                 return jobs.value.filter(j => j.name.includes(jobSearch.value) || j.sourceDirectory.includes(jobSearch.value));
             });
-
             const getFileName = (path) => path ? path.split(/[/\\]/).pop() : '-';
-            const formatTime = (t) => t ? t.replace('T', ' ').substring(5, 19) : '-';
+
+            // 增强版时间处理，防止渲染卡死
+            const formatTime = (t) => {
+                if (!t) return '-';
+                if (typeof t === 'string') return t.replace('T', ' ').substring(5, 19);
+                if (Array.isArray(t)) return `${t[0]}-${String(t[1]).padStart(2, '0')}-${String(t[2]).padStart(2, '0')} ${String(t[3] || 0).padStart(2, '0')}:${String(t[4] || 0).padStart(2, '0')}`;
+                return String(t);
+            };
+
             const getStatusClass = (s) => {
                 const map = {
-                    'ACTIVE': 'badge bg-primary', 'STOPPED': 'badge bg-secondary',
-                    'NEW': 'badge bg-secondary', 'TRANSCODING': 'badge bg-warning text-dark',
-                    'PROCESSING_CHILDS': 'badge bg-info text-dark',
-                    'FINISHED': 'badge bg-success', 'FINISHED_WITH_ERROR': 'badge bg-danger',
-                    'WAIT_LOAD': 'badge bg-light text-dark border', 'LOADING': 'badge bg-primary',
-                    'WAIT_VERIFY': 'badge bg-info text-dark', 'VERIFYING': 'badge bg-info',
-                    'PASS': 'badge bg-success', 'FAIL_LOAD': 'badge bg-danger', 'FAIL_VERIFY': 'badge bg-danger', 'FAIL_TRANSCODE': 'badge bg-danger'
+                    'ACTIVE': 'badge bg-primary',
+                    'STOPPED': 'badge bg-secondary',
+                    'NEW': 'badge bg-secondary',
+                    'TRANSCODING': 'badge bg-warning text-dark',
+                    'FINISHED': 'badge bg-success',
+                    'FAIL_LOAD': 'badge bg-danger',
+                    'FAIL_VERIFY': 'badge bg-danger',
+                    'FAIL_TRANSCODE': 'badge bg-danger',
+                    'PASS': 'badge bg-success'
                 };
                 return map[s] || 'badge bg-secondary';
             };
-
-            // 【新增】切换视图
             const switchToCluster = () => {
                 currentView.value = 'cluster';
                 loadClusterStatus();
             };
-
-            // 【新增】加载集群状态
             const loadClusterStatus = async () => {
                 try {
                     const res = await axios.get(`${API_BASE.replace('/migration', '')}/sys/config/cluster/status`);
                     clusterNodes.value = res.data;
                     lastClusterRefresh.value = new Date().toISOString();
                 } catch (e) {
-                    console.error("加载集群状态失败", e);
-                    // 如果失败，显示假数据用于测试 UI (可选)
-                    // clusterNodes.value = [{node: '192.168.1.101', status: 'DOWN', error: e.message}];
                 }
             };
-
-            // 【新增】应用集群配置
             const applyClusterConfig = async () => {
-                const payload = {};
-                if (clusterConfigForm.load) payload.load = clusterConfigForm.load;
-                if (clusterConfigForm.verify) payload.verify = clusterConfigForm.verify;
-
-                if (Object.keys(payload).length === 0) {
-                    alert("请输入至少一个数值");
-                    return;
-                }
-
-                if (!confirm(`确定要向所有节点广播配置吗？\nLoad: ${payload.load || '不变'}\nVerify: ${payload.verify || '不变'}`)) return;
-
-                try {
-                    await axios.post(`${API_BASE.replace('/migration', '')}/sys/config/cluster/concurrency`, payload);
-                    alert("✅ 指令已下发");
+                if (confirm('广播修改?')) {
+                    await axios.post(`${API_BASE.replace('/migration', '')}/sys/config/cluster/concurrency`, {
+                        load: clusterConfigForm.load,
+                        verify: clusterConfigForm.verify
+                    });
                     showClusterConfigModal.value = false;
-                    // 2秒后自动刷新看结果
                     setTimeout(loadClusterStatus, 2000);
-                } catch (e) {
-                    alert("❌ 操作失败: " + (e.response?.data || e.message));
                 }
             };
-
-            // --- 新增：监控格式化工具 ---
-            const formatPercent = (val) => {
-                if (val === undefined || val < 0) return 'N/A';
-                return (val * 100).toFixed(1) + '%';
-            };
-
+            const formatPercent = (val) => val === undefined || val < 0 ? 'N/A' : (val * 100).toFixed(1) + '%';
             const formatBytes = (bytes) => {
                 if (!bytes || bytes < 0) return '-';
                 const sizes = ['B', 'KB', 'MB', 'GB'];
                 const i = Math.floor(Math.log(bytes) / Math.log(1024));
                 return parseFloat((bytes / Math.pow(1024, i)).toFixed(1)) + ' ' + sizes[i];
             };
-
             const getCpuColor = (cpu) => cpu > 0.8 ? 'text-danger fw-bold' : (cpu > 0.5 ? 'text-warning' : 'text-success');
-            const getCpuBgColor = (cpu) => cpu > 0.8 ? 'bg-danger' : (cpu > 0.5 ? 'bg-warning' : 'bg-success');
+            const getMemPercent = (mem) => !mem || !mem.max ? 0 : (mem.used / mem.max) * 100;
 
-            const getMemPercent = (mem) => {
-                if (!mem || !mem.max || mem.max <= 0) return 0;
-                return (mem.used / mem.max) * 100;
-            };
-
-            const getDbPercent = (db, type) => {
-                if (!db || !db.max || db.max <= 0) return 0;
-                // type: 'active' or 'idle'
-                return (db[type] / db.max) * 100;
-            };
-
-            // --- 生命周期 ---
             onMounted(() => {
                 loadJobs();
                 timer = setInterval(() => {
-                    if(autoRefresh.value) {
-                        // 智能刷新：只刷新当前打开的视图
-                        if (currentView.value === 'cluster') {
-                            loadClusterStatus();
-                        } else {
-                            if(!selectedJob.value) loadJobs();
-                            else {
-                                loadDashboard(); // 实时刷新红绿灯
-                                fetchBatches(); // 刷新批次状态
-                                if(selectedBatch.value) fetchDetails(); // 刷新明细进度
-                                if(showSplitDrawer.value && selectedDetail.value) {
-                                    // 新的调用方式：复用 loadSplits 方法，自动带上当前的分页和查询参数
-                                    loadSplits();
-                                }
-                            }
+                    if (autoRefresh.value) {
+                        if (currentView.value === 'cluster') loadClusterStatus(); else if (selectedJob.value) {
+                            loadDashboard();
+                            fetchBatches();
+                            if (selectedBatch.value) fetchDetails();
+                            if (showSplitDrawer.value && selectedDetail.value) loadSplits();
                         }
                     }
                 }, 3000);
@@ -1305,39 +1056,60 @@
             onUnmounted(() => clearInterval(timer));
 
             return {
-                jobs, batches, detailsData, splits,
-                reVerifySplit,downloadSplit,
-                batchRetryLoadFailed, batchRetryVerifyFailed,
+                jobs,
+                batches,
+                detailsData,
+                splits,
+                reVerifySplit,
+                downloadSplit,
+                batchRetryLoadFailed,
+                batchRetryVerifyFailed,
                 filterErrorOnly,
-                selectedJob, selectedBatch, selectedDetail,
-                jobSearch, filteredJobs, pageConfig, loadingJobs, autoRefresh,
-                showCreateJobModal, showSplitDrawer, showDiffModal, diffContent, newJob,
-
+                selectedJob,
+                selectedBatch,
+                selectedDetail,
+                jobSearch,
+                filteredJobs,
+                pageConfig,
+                loadingJobs,
+                autoRefresh,
+                showCreateJobModal,
+                showSplitDrawer,
+                showDiffModal,
+                diffContent,
+                newJob,
                 splitPage,
                 splitQuery,
                 loadSplits,
                 changeSplitPage,
-
                 createJobError,
                 openCreateModal,
                 submitCreateJob,
-                selectJob, selectBatch, changePage, openSplits,
-                jobAction, retryBatch, closeBatch, retryTranscode, retrySplit, viewDiff,
-
-                getFileName, formatTime, getStatusClass,
-                fetchBatches, // export for manual refresh btn
+                selectJob,
+                selectBatch,
+                changePage,
+                openSplits,
+                jobAction,
+                retryBatch,
+                closeBatch,
+                retryTranscode,
+                retrySplit,
+                viewDiff,
+                getFileName,
+                formatTime,
+                getStatusClass,
+                fetchBatches,
                 viewBadFile,
-
                 showVerifyModal,
                 verifyLoading,
                 verifyResults,
                 globalVerify,
                 currentVerifyJobId,
-
                 dashboardData,
-                showDiagnosisModal, diagnosisContent, currentDiagnosisSplit,
+                showDiagnosisModal,
+                diagnosisContent,
+                currentDiagnosisSplit,
                 previewDiagnosis,
-
                 currentView,
                 clusterNodes,
                 lastClusterRefresh,
@@ -1346,11 +1118,22 @@
                 switchToCluster,
                 loadClusterStatus,
                 applyClusterConfig,
-
-                formatPercent, formatBytes, getCpuColor, getCpuBgColor, getMemPercent, getDbPercent
+                formatPercent,
+                formatBytes,
+                getCpuColor,
+                getMemPercent,
+                splitStats,totalSplitStats
             };
         }
-    }).mount('#app');
+    });
+
+    // 增加全局错误捕获雷达
+    app.config.errorHandler = (err, instance, info) => {
+        console.error("【渲染错误捕获】", err, info);
+        alert("页面发生渲染错误:\n" + err.message);
+    };
+
+    app.mount('#app');
 </script>
 </body>
 </html>

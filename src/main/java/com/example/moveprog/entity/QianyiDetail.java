@@ -15,7 +15,9 @@ import java.time.LocalDateTime;
 @Table(name = "qianyi_detail", indexes = {
         @Index(name = "idx_job_id", columnList = "job_id"),
         @Index(name = "idx_qianyi_id", columnList = "qianyi_id"),
-        @Index(name = "idx_status_node", columnList = "status, node_id")
+        @Index(name = "idx_status_node", columnList = "status, node_id"),
+        // 【新增】用于 Dashboard 快速统计：查某个Job下各种状态的数量
+        @Index(name = "idx_job_status", columnList = "job_id, status")
 })
 public class QianyiDetail extends BaseNodeEntity {
     @Id

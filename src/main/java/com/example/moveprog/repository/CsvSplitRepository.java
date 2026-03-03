@@ -118,5 +118,36 @@ public interface CsvSplitRepository extends JpaRepository<CsvSplit, Long>, JpaSp
     Long sumSplitRows(@Param("jobId") Long jobId,
                       @Param("schema") String schema,
                       @Param("tableName") String tableName);
+// ==========================================
+    // 仪表盘统计专用查询
+    // ==========================================
+
+    /**
+     * 按状态分组统计当前作业下所有切片的数量
+     */
+    @Query("SELECT s.status, COUNT(s.id) FROM CsvSplit s WHERE s.jobId = :jobId GROUP BY s.status")
+    List<Object[]> countStatusByJobId(@Param("jobId") Long jobId);
+
+    /**
+     * 统计当前作业下出现频率最高的 5 个切片错误信息
+     */
+    @Query(value = """
+        SELECT error_msg, COUNT(*) as cnt 
+        FROM csv_split 
+        WHERE job_id = :jobId 
+          AND status IN ('FAIL_LOAD', 'FAIL_VERIFY') 
+          AND error_msg IS NOT NULL 
+          AND error_msg != '' 
+        GROUP BY error_msg 
+        ORDER BY cnt DESC 
+        LIMIT 5
+        """, nativeQuery = true)
+    List<Object[]> findTopErrorsByJobId(@Param("jobId") Long jobId);
+
+    /**
+     * 【新增】按状态分组统计某个文件明细 (Detail) 下的所有切片数量
+     */
+    @Query("SELECT s.status, COUNT(s.id) FROM CsvSplit s WHERE s.detailId = :detailId GROUP BY s.status")
+    List<Object[]> countStatusByDetailId(@Param("detailId") Long detailId);
 
 }
