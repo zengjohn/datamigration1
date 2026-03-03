@@ -148,7 +148,7 @@ app:
     auto-commit: false
 
     # 一个连接最长存活 30 分钟，防止服务端因为 wait_timeout 踢掉
-    max-lifetime: 1800000sss
+    max-lifetime: 1800000
 
   job:
     auto-clean-on-close: true

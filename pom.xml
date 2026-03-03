@@ -29,7 +29,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <!-- 关键：强制 Maven 使用项目指定的 JDK -->
         <maven.compiler.release>21</maven.compiler.release>
-        <lombok.version>1.18.32</lombok.version>
+        <lombok.version>1.18.40</lombok.version>
         <spring.boot.version>3.2.5</spring.boot.version>
         <testcontainers.version>1.21.3</testcontainers.version>
     </properties>
