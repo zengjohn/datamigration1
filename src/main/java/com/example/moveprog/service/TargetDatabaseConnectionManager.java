@@ -9,10 +9,12 @@ import com.example.moveprog.repository.MigrationJobRepository;
 import com.example.moveprog.repository.QianyiDetailRepository;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.Pair;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +38,10 @@ public class TargetDatabaseConnectionManager {
     private final QianyiDetailRepository qianyiDetailRepo;
     private final JdbcHelper jdbcHelper;
     private final AppProperties appProperties;
+
+    // 【新增】注入 MeterRegistry 用于监控注册
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     // 【核心】缓存：JobId -> 连接池
     // 使用 ConcurrentHashMap 保证并发安全
@@ -100,7 +106,10 @@ public class TargetDatabaseConnectionManager {
         config.setJdbcUrl(url);
         config.setUsername(user);
         config.setPassword(password);
+        // 关键点：给每个连接池起个唯一名字，方便监控区分
         config.setPoolName("HikariPool-Job-" + jobId);
+        // 【核心修改】将连接池注册到 Micrometer，这样 Actuator 才能看到它
+        config.setMetricRegistry(meterRegistry);
 
         // --- 模板部分 (来自 yml) ---
         config.setMaximumPoolSize(template.getMaxPoolSize());

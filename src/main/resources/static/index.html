@@ -67,6 +67,16 @@
         /* 进度条增强 */
         .progress-stacked { display: flex; height: 8px; overflow: hidden; background-color: #e9ecef; border-radius: 4px; margin-top: 5px;}
         .progress-segment { height: 100%; transition: width 0.6s ease; }
+
+        .card {
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .card-header {
+            font-family: 'Courier New', monospace; /* Makes IPs look cool */
+        }
     </style>
 </head>
 <body>
@@ -74,6 +84,17 @@
 <div id="app" class="main-container">
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary px-3 shadow-sm" style="height: 56px;">
         <span class="navbar-brand mb-0 h1"><i class="bi bi-hdd-network me-2"></i>数据迁移运维控制台</span>
+        <!-- 【新增】视图切换菜单 -->
+        <div class="navbar-nav mx-4">
+            <a class="nav-link px-3" :class="{active: currentView === 'jobs', 'fw-bold': currentView === 'jobs'}"
+               href="#" @click.prevent="currentView = 'jobs'">
+                <i class="bi bi-list-task"></i> 作业管理
+            </a>
+            <a class="nav-link px-3" :class="{active: currentView === 'cluster', 'fw-bold': currentView === 'cluster'}"
+               href="#" @click.prevent="switchToCluster()">
+                <i class="bi bi-diagram-3-fill"></i> 集群监控
+            </a>
+        </div>
         <div class="ms-auto d-flex align-items-center gap-3">
             <div class="form-check form-switch text-white">
                 <input class="form-check-input" type="checkbox" v-model="autoRefresh" id="refreshSwitch">
@@ -85,7 +106,7 @@
         </div>
     </nav>
 
-    <div class="content-area">
+    <div class="content-area" v-if="currentView === 'jobs'">
         <div class="sidebar">
             <div class="p-3 border-bottom bg-light">
                 <input type="text" class="form-control form-control-sm" placeholder="🔍 搜索作业..." v-model="jobSearch">
@@ -279,6 +300,135 @@
             </template>
         </div>
     </div>
+    <!-- 【新增】集群监控视图 -->
+    <div class="container-fluid p-4 overflow-auto bg-light" v-if="currentView === 'cluster'" style="flex: 1;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 class="text-secondary"><i class="bi bi-server me-2"></i>集群节点状态</h4>
+            <div>
+                <span class="text-muted small me-3" v-if="lastClusterRefresh">更新于: {{ formatTime(lastClusterRefresh) }}</span>
+                <button class="btn btn-outline-primary btn-sm me-2" @click="loadClusterStatus">
+                    <i class="bi bi-arrow-clockwise"></i> 刷新
+                </button>
+                <button class="btn btn-danger btn-sm" @click="showClusterConfigModal = true">
+                    <i class="bi bi-sliders"></i> 全局并发配置
+                </button>
+            </div>
+        </div>
+
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 row-cols-xl-4 g-4">
+            <div class="col" v-for="node in clusterNodes" :key="node.node">
+                <div class="card h-100 shadow-sm border-0" :class="node.status === 'UP' ? 'border-top border-4 border-success' : 'border-top border-4 border-danger'">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title mb-0 font-monospace text-dark">{{ node.node }}</h5>
+                            <span class="badge" :class="node.status === 'UP' ? 'bg-success' : 'bg-danger'">
+                                        {{ node.status }}
+                                    </span>
+                        </div>
+
+                        <div v-if="node.status !== 'UP'" class="alert alert-danger py-1 small">
+                            {{ node.error || '连接超时' }}
+                        </div>
+
+                        <div v-else>
+                            <!-- 仪表盘数据 (并发限制) -->
+                            <div class="row text-center mb-3 g-0 border-bottom pb-2">
+                                <div class="col-6 border-end">
+                                    <div class="h4 fw-bold text-primary mb-0">{{ node.config?.load ?? '-' }}</div>
+                                    <div class="small text-muted" style="font-size: 0.75rem;">Load 线程</div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="h4 fw-bold text-info mb-0">{{ node.config?.verify ?? '-' }}</div>
+                                    <div class="small text-muted" style="font-size: 0.75rem;">Verify 线程</div>
+                                </div>
+                            </div>
+
+                            <div class="px-2">
+                                <!-- 系统资源 -->
+                                <div class="d-flex justify-content-between small mb-1 text-muted">
+                                    <span><i class="bi bi-cpu"></i> CPU</span>
+                                    <span><i class="bi bi-memory"></i> Mem</span>
+                                    <!-- 显示格式: Used / Committed -->
+                                    <span class="text-muted" :title="'最大可用: ' + formatBytes(node.mem?.max)">
+                                            {{ formatBytes(node.mem?.used) }} / {{ formatBytes(node.mem?.committed) }}
+                                        </span>
+                                    <span><i class="bi bi-activity"></i> Threads</span>
+                                </div>
+                                <div class="d-flex justify-content-between small fw-bold mb-3 border-bottom pb-2">
+                                    <span :class="getCpuColor(node.cpu)">{{ formatPercent(node.cpu) }}</span>
+                                    <span>{{ formatBytes(node.mem?.used) }}</span>
+                                    <span>{{ node.threads?.toFixed(0) }}</span>
+                                </div>
+
+                                <!-- 数据库连接池列表 (支持多个) -->
+                                <div style="max-height: 150px; overflow-y: auto;">
+                                    <div v-for="pool in node.pools" :key="pool.name" class="mb-2">
+                                        <div class="d-flex justify-content-between small">
+                                                <span class="text-truncate" style="max-width: 120px;" :title="pool.name">
+                                                    <i class="bi" :class="pool.type==='META'?'bi-database-fill text-secondary':'bi-database text-primary'"></i>
+                                                    {{ pool.name.replace('HikariPool-', '') }}
+                                                </span>
+                                            <span class="text-muted">{{ pool.active }} / {{ pool.max }}</span>
+                                        </div>
+                                        <!-- 进度条 -->
+                                        <div class="progress mb-2" style="height: 6px;">
+                                            <!-- Used (绿色) -->
+                                            <div class="progress-bar bg-success" role="progressbar"
+                                                 :style="{width: getMemPercent(node.mem) + '%'}"></div>
+                                            <!-- Committed 剩余部分 (浅绿/半透明) -->
+                                            <div class="progress-bar bg-success opacity-25" role="progressbar"
+                                                 :style="{width: ((node.mem?.committed - node.mem?.used) / node.mem?.max * 100) + '%'}"></div>
+                                        </div>
+                                    </div>
+                                    <div v-if="!node.pools || node.pools.length === 0" class="text-center small text-muted my-2">
+                                        无活跃数据库连接
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div class="col-12 text-center py-5" v-if="clusterNodes.length === 0">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">正在连接集群...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 【新增】集群配置弹窗 -->
+    <div class="modal fade show" v-if="showClusterConfigModal" style="display: block; background: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔥 集群并发动态调优</h5>
+                    <button type="button" class="btn-close" @click="showClusterConfigModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning d-flex align-items-center">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <small>警告：修改将立即广播至所有在线节点！</small>
+                    </div>
+                    <form @submit.prevent="applyClusterConfig">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Load 任务并发数</label>
+                            <input v-model.number="clusterConfigForm.load" type="number" class="form-control" placeholder="保持不变请留空">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Verify 任务并发数</label>
+                            <input v-model.number="clusterConfigForm.verify" type="number" class="form-control" placeholder="保持不变请留空">
+                        </div>
+                        <div class="text-end">
+                            <button type="button" class="btn btn-secondary me-2" @click="showClusterConfigModal = false">取消</button>
+                            <button type="submit" class="btn btn-danger">立即应用</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
 
     <div class="drawer-overlay" v-if="showSplitDrawer" @click="showSplitDrawer = false"></div>
     <div class="drawer" :class="{open: showSplitDrawer}">
@@ -394,7 +544,7 @@
                         没有找到符合条件的切片数据
                     </td>
                 </tr>
-                </tbody>>
+                </tbody>
             </table>
 
             <div class="p-2 border-top bg-light d-flex justify-content-between align-items-center">
@@ -638,6 +788,13 @@
             const verifyLoading = ref(false);         // 控制加载转圈
             const verifyResults = ref([]);            // 存储后端返回的核对结果列表
             const currentVerifyJobId = ref(null);     // 记录当前正在核对哪个 Job
+
+            // 【新增】集群视图相关的状态
+            const currentView = ref('jobs'); // 'jobs' | 'cluster'
+            const clusterNodes = ref([]);
+            const lastClusterRefresh = ref(null);
+            const showClusterConfigModal = ref(false);
+            const clusterConfigForm = reactive({ load: null, verify: null });
 
             // 【新增】切片分页数据容器
             const splitPage = ref({
@@ -1052,20 +1209,94 @@
                 return map[s] || 'badge bg-secondary';
             };
 
+            // 【新增】切换视图
+            const switchToCluster = () => {
+                currentView.value = 'cluster';
+                loadClusterStatus();
+            };
+
+            // 【新增】加载集群状态
+            const loadClusterStatus = async () => {
+                try {
+                    const res = await axios.get(`${API_BASE.replace('/migration', '')}/sys/config/cluster/status`);
+                    clusterNodes.value = res.data;
+                    lastClusterRefresh.value = new Date().toISOString();
+                } catch (e) {
+                    console.error("加载集群状态失败", e);
+                    // 如果失败，显示假数据用于测试 UI (可选)
+                    // clusterNodes.value = [{node: '192.168.1.101', status: 'DOWN', error: e.message}];
+                }
+            };
+
+            // 【新增】应用集群配置
+            const applyClusterConfig = async () => {
+                const payload = {};
+                if (clusterConfigForm.load) payload.load = clusterConfigForm.load;
+                if (clusterConfigForm.verify) payload.verify = clusterConfigForm.verify;
+
+                if (Object.keys(payload).length === 0) {
+                    alert("请输入至少一个数值");
+                    return;
+                }
+
+                if (!confirm(`确定要向所有节点广播配置吗？\nLoad: ${payload.load || '不变'}\nVerify: ${payload.verify || '不变'}`)) return;
+
+                try {
+                    await axios.post(`${API_BASE.replace('/migration', '')}/sys/config/cluster/concurrency`, payload);
+                    alert("✅ 指令已下发");
+                    showClusterConfigModal.value = false;
+                    // 2秒后自动刷新看结果
+                    setTimeout(loadClusterStatus, 2000);
+                } catch (e) {
+                    alert("❌ 操作失败: " + (e.response?.data || e.message));
+                }
+            };
+
+            // --- 新增：监控格式化工具 ---
+            const formatPercent = (val) => {
+                if (val === undefined || val < 0) return 'N/A';
+                return (val * 100).toFixed(1) + '%';
+            };
+
+            const formatBytes = (bytes) => {
+                if (!bytes || bytes < 0) return '-';
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                return parseFloat((bytes / Math.pow(1024, i)).toFixed(1)) + ' ' + sizes[i];
+            };
+
+            const getCpuColor = (cpu) => cpu > 0.8 ? 'text-danger fw-bold' : (cpu > 0.5 ? 'text-warning' : 'text-success');
+            const getCpuBgColor = (cpu) => cpu > 0.8 ? 'bg-danger' : (cpu > 0.5 ? 'bg-warning' : 'bg-success');
+
+            const getMemPercent = (mem) => {
+                if (!mem || !mem.max || mem.max <= 0) return 0;
+                return (mem.used / mem.max) * 100;
+            };
+
+            const getDbPercent = (db, type) => {
+                if (!db || !db.max || db.max <= 0) return 0;
+                // type: 'active' or 'idle'
+                return (db[type] / db.max) * 100;
+            };
+
             // --- 生命周期 ---
             onMounted(() => {
                 loadJobs();
                 timer = setInterval(() => {
                     if(autoRefresh.value) {
                         // 智能刷新：只刷新当前打开的视图
-                        if(!selectedJob.value) loadJobs();
-                        else {
-                            loadDashboard(); // 实时刷新红绿灯
-                            fetchBatches(); // 刷新批次状态
-                            if(selectedBatch.value) fetchDetails(); // 刷新明细进度
-                            if(showSplitDrawer.value && selectedDetail.value) {
-                                // 新的调用方式：复用 loadSplits 方法，自动带上当前的分页和查询参数
-                                loadSplits();
+                        if (currentView.value === 'cluster') {
+                            loadClusterStatus();
+                        } else {
+                            if(!selectedJob.value) loadJobs();
+                            else {
+                                loadDashboard(); // 实时刷新红绿灯
+                                fetchBatches(); // 刷新批次状态
+                                if(selectedBatch.value) fetchDetails(); // 刷新明细进度
+                                if(showSplitDrawer.value && selectedDetail.value) {
+                                    // 新的调用方式：复用 loadSplits 方法，自动带上当前的分页和查询参数
+                                    loadSplits();
+                                }
                             }
                         }
                     }
@@ -1105,7 +1336,18 @@
 
                 dashboardData,
                 showDiagnosisModal, diagnosisContent, currentDiagnosisSplit,
-                previewDiagnosis
+                previewDiagnosis,
+
+                currentView,
+                clusterNodes,
+                lastClusterRefresh,
+                showClusterConfigModal,
+                clusterConfigForm,
+                switchToCluster,
+                loadClusterStatus,
+                applyClusterConfig,
+
+                formatPercent, formatBytes, getCpuColor, getCpuBgColor, getMemPercent, getDbPercent
             };
         }
     }).mount('#app');

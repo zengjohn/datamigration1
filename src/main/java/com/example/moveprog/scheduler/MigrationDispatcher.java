@@ -65,6 +65,9 @@ public class MigrationDispatcher {
     // 校验任务通常比较慢，并发太高容易把数据库读IO打满，设置保守一些
     private Semaphore verifySemaphore;
 
+    // Keep track of current limits for UI display
+    private int currentLoadLimit;
+    private int currentVerifyLimit;
 
     // 使用 @PostConstruct 初始化信号量
     @jakarta.annotation.PostConstruct
@@ -74,18 +77,43 @@ public class MigrationDispatcher {
         // 1. 计算 Load 并发度
         int configLoad = appProperties.getExecutor().getLoadConcurrency();
         int finalLoad = (configLoad > 0) ? configLoad : (int)(maxPoolSize * 0.6); // 默认占 60% 连接
-        // 保底至少 1 个
-        this.loadSemaphore = new Semaphore(Math.max(1, finalLoad));
+        resizeLoadPermits(Math.max(1, finalLoad));
 
         // 2. 计算 Verify 并发度
         int configVerify = appProperties.getExecutor().getVerifyConcurrency();
         int finalVerify = (configVerify > 0) ? configVerify : (int)(maxPoolSize * 0.3); // 默认占 30% 连接
-        this.verifySemaphore = new Semaphore(Math.max(1, finalVerify));
+        resizeVerifyPermits(Math.max(1, finalVerify));
+    }
 
-        log.info("虚拟线程并发限制初始化: Load={}, Verify={} (连接池大小={})",
-                this.loadSemaphore.availablePermits(),
-                this.verifySemaphore.availablePermits(),
-                maxPoolSize);
+    /**
+     * 【新增】动态调整 Load 任务并发度
+     */
+    public synchronized void resizeLoadPermits(int newPermits) {
+        if (newPermits <= 0) return;
+        log.info("动态调整 Load 并发度: {} -> {}", this.currentLoadLimit, newPermits);
+        this.currentLoadLimit = newPermits;
+        // 直接替换 Semaphore。
+        // 旧的 Semaphore 会被正在运行的任务持有并在结束后释放(虽然没用了)，
+        // 新的任务会获取新的 Semaphore。这是安全的。
+        this.loadSemaphore = new Semaphore(newPermits);
+    }
+
+    /**
+     * 【新增】动态调整 Verify 任务并发度
+     */
+    public synchronized void resizeVerifyPermits(int newPermits) {
+        if (newPermits <= 0) return;
+        log.info("动态调整 Verify 并发度: {} -> {}", this.currentVerifyLimit, newPermits);
+        this.currentVerifyLimit = newPermits;
+        this.verifySemaphore = new Semaphore(newPermits);
+    }
+
+    public int getCurrentLoadLimit() {
+        return currentLoadLimit;
+    }
+
+    public int getCurrentVerifyLimit() {
+        return currentVerifyLimit;
     }
 
     // 1. 转码专用线程池 (CPU密集型，保持使用传统线程池)

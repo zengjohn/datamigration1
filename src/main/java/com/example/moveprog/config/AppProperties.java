@@ -50,6 +50,12 @@ public class AppProperties {
     // 嵌套配置对象
     private TargetDbConfig targetDbConfig = new TargetDbConfig();
 
+    /**
+     * 【新增】集群所有节点的 IP 列表 (用于监控聚合和广播指令)
+     * 格式: 192.168.37.101:8080,192.168.37.102:8080
+     */
+    private List<String> clusterNodes;
+
     @Data
     public static class ExecutorGroup {
         private ExecutorConfig transcode = new ExecutorConfig();

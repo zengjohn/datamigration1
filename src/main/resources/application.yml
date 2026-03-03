@@ -53,6 +53,17 @@ spring:
         core-size: 10
         max-size: 50
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health,info,metrics,prometheus" # 暴露这些端点
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+
 # 自定义应用配置
 app:
   # 【关键】指定本机身份

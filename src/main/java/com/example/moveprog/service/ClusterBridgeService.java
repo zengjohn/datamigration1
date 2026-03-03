@@ -3,13 +3,18 @@ package com.example.moveprog.service;
 import com.example.moveprog.config.AppProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.*;
 
-import java.util.Enumeration;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 
 @Service
@@ -18,11 +23,20 @@ public class ClusterBridgeService {
     private final AppProperties config;
 
     private final int serverPort;
+    // 【修复】动态获取配置文件中的连接池名称，默认值为 HikariPool-1 (Spring Boot 默认值)
+    @Value("${spring.datasource.hikari.pool-name:HikariPool-1}")
+    private String metaDbPoolName;
 
     private final HttpServletRequest request;
-    // 如果没有配置 RestTemplate Bean，可以直接 new 一个
-    private final RestTemplate restTemplate = new RestTemplate();
-
+    // 配置带超时的 RestTemplate (连接超时 2秒, 读取超时 3秒)
+    // 避免某个节点宕机导致整个监控接口卡顿
+    private final RestTemplate restTemplate = new RestTemplate(new SimpleClientHttpRequestFactory() {{
+        setConnectTimeout(2000);
+        setReadTimeout(3000);
+    }});
+    // 专用线程池用于并行查询集群状态
+    private final Executor clusterQueryExecutor = Executors.newFixedThreadPool(10);
+    // 【修复1】自动注入当前运行端口 (默认为 8080)
 
     // Spring 看到这里需要 Environment，会自动把容器里的那个 Env 传进来
     // 这个 Environment 里有什么？
@@ -46,6 +60,58 @@ public class ClusterBridgeService {
          * 结论：您可以放心地在单例 Service 中使用它，它是线程安全的。
          */
         this.request = request;
+    }
+
+    public List<Map<String, Object>> aggregateClusterMetrics() {
+        List<String> nodes = config.getClusterNodes();
+
+        if (nodes == null || nodes.isEmpty()) {
+            String nodeAddress = config.getCurrentNodeIp()+":" + serverPort;
+            return List.of(fetchNodeMetric(nodeAddress));
+        }
+
+        List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>();
+        for (String node : nodes) {
+            futures.add(CompletableFuture.supplyAsync(() -> fetchNodeMetric(node), clusterQueryExecutor));
+        }
+
+        return futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+    }
+
+    private Map<String, Object> fetchNodeMetric(String nodeHost) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("node", nodeHost);
+        try {
+            // 【核心修改】只调用这一个聚合接口
+            String url = "http://" + nodeHost + "/api/sys/config/node-monitor";
+            Map data = restTemplate.getForObject(url, Map.class);
+
+            // 将远程返回的数据全部塞入 result
+            if (data != null) {
+                result.putAll(data);
+            }
+            result.put("status", "UP");
+
+        } catch (Exception e) {
+            log.warn("Cluster Monitor: 无法连接节点 [{}] - {}", nodeHost, e.getMessage());
+            result.put("status", "DOWN");
+            result.put("error", e.getMessage());
+        }
+        return result;
+    }
+
+    public void broadcastConfig(Map<String, Integer> payload) {
+        List<String> nodes = config.getClusterNodes();
+        if (nodes == null || nodes.isEmpty()) {
+            nodes = List.of("127.0.0.1:" + serverPort);
+        }
+        for (String node : nodes) {
+            try {
+                restTemplate.postForEntity("http://" + node + "/api/sys/config/concurrency", payload, Void.class);
+            } catch (Exception e) { /* ignore */ }
+        }
     }
 
     /**
