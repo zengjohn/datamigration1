@@ -79,7 +79,7 @@ public class TranscodeService {
             log.info("<<< 转码完成 Detail: {}", detailId);
         } catch (JobStoppedException e) {
             // 【特殊处理】用户叫停
-            log.warn("任务被中断: {}", e.getMessage());
+            log.warn("任务被中断: {}, 当前状态: {}", e.getMessage(), detail.getStatus());
             // 此时应该把状态重置回 NEW，或者保持 TRANSCODING 等待下次“启动修复”
             // 建议：不做处理，直接 return。因为下次启动时的 StartupTaskResetter 会负责把 TRANSCODING 重置为 NEW
             return;

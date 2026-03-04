@@ -53,7 +53,8 @@ public class VerifyDiffWriter implements AutoCloseable {
                 throw new DiffLimitExceededException("差异数量超过阈值: " + maxDiff + "，停止比对");
             }
         } catch (IOException e) {
-            log.error("写入差异文件失败: {}", filePath, e);
+            log.error("写入差异文件失败: {}", filePath);
+            throw new RuntimeException("写入差异文件失败: " + filePath, e);
         }
     }
 
