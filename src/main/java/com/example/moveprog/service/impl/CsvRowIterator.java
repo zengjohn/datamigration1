@@ -11,7 +11,7 @@ import java.nio.charset.Charset;
 import java.util.Arrays;
 
 @Slf4j
-public class CsvRowIterator implements CloseableRowIterator {
+public class CsvRowIterator implements CloseableRowIterator<String> {
     private InputStreamReader reader;
     private CsvParser parser;
     private String[] nextRow;

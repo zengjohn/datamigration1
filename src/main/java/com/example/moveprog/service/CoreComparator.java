@@ -1,7 +1,6 @@
 package com.example.moveprog.service;
 
 import com.example.moveprog.exception.JobStoppedException;
-import com.example.moveprog.service.impl.JdbcRowIterator;
 import com.example.moveprog.util.DBUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -35,7 +34,7 @@ public class CoreComparator {
      * @param fileIter 文件数据的迭代器 (无论是 UTF8 还是 IBM1388)
      * @return 返回本次比对发现的差异行数 (用于双重校验)
      */
-    public long compareStreams(Long jobId, CloseableRowIterator<String> fileIter, JdbcRowIterator dbIter, VerifyDiffWriter diffWriter) throws IOException {
+    public long compareStreams(Long jobId, CloseableRowIterator<String> fileIter, IJdbcRowIterator<Object> dbIter, VerifyDiffWriter diffWriter) throws IOException {
         // 1. 获取元数据 (用于打印列名)
         int[] colSqlTypes = dbIter.getColumnTypes();
         String[] colNames = dbIter.getColumnNames();

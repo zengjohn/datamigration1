@@ -636,15 +636,42 @@
                 </div>
                 <div class="modal-body">
                     <form @submit.prevent="submitCreateJob">
-                        <div class="mb-3"><label>名称</label><input v-model="newJob.name" class="form-control" required>
+                        <div class="mb-3">
+                            <label class="form-label small">作业名称</label>
+                            <input v-model="newJob.name" type="text" class="form-control" required>
                         </div>
-                        <div class="mb-3"><label>源目录</label><input v-model="newJob.sourceDirectory"
-                                                                      class="form-control" required></div>
-                        <div class="mb-3"><label>输出目录</label><input v-model="newJob.outDirectory"
-                                                                        class="form-control" required></div>
+                        <div class="mb-3">
+                            <label class="form-label small">监控源目录</label>
+                            <input v-model="newJob.sourceDirectory" type="text" class="form-control" placeholder="/data/..." required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">输出目录</label>
+                            <input v-model="newJob.outDirectory" type="text" class="form-control" placeholder="/outdata/..." required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标schema</label>
+                            <input v-model="newJob.targetSchema" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标库host</label>
+                            <input v-model="newJob.targetDbHost" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">目标库端口</label>
+                            <input v-model="newJob.targetDbPort" type="text" class="form-control form-control-sm">
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col">
+                                <label class="form-label small">用户</label>
+                                <input v-model="newJob.targetDbUser" type="text" class="form-control form-control-sm">
+                            </div>
+                            <div class="col">
+                                <label class="form-label small">密码</label>
+                                <input v-model="newJob.targetDbPass" type="password" class="form-control form-control-sm">
+                            </div>
+                        </div>
                         <div class="text-end">
-                            <button type="button" class="btn btn-light" @click="showCreateJobModal = false">取消
-                            </button>
+                            <button type="button" class="btn btn-light me-2" @click="showCreateJobModal = false">取消</button>
                             <button type="submit" class="btn btn-primary">提交</button>
                         </div>
                     </form>

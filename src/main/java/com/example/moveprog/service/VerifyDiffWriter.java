@@ -21,8 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class VerifyDiffWriter implements AutoCloseable {
     private final String filePath;
     private final int maxDiff;
-    @Getter
-    private final AtomicLong diffCount = new AtomicLong(0);
+    private final AtomicLong diffCount;
     private BufferedWriter writer;
 
     public VerifyDiffWriter(MigrationJob migrationJob, Long qianyiId, Long splitId, int maxDiff) throws IOException {
@@ -31,6 +30,7 @@ public class VerifyDiffWriter implements AutoCloseable {
         Files.createDirectories(Paths.get(parentFile.getAbsolutePath()));
         // 延迟创建文件：只有真正写入时才创建 writer，避免生成大量空文件
         this.maxDiff = maxDiff;
+        this.diffCount = new AtomicLong(0);
     }
 
     /**
@@ -47,7 +47,7 @@ public class VerifyDiffWriter implements AutoCloseable {
             writer.newLine();
 
             // 【核心修复】每写一条，计数加一
-            long lDiffCount = diffCount.incrementAndGet();
+            long lDiffCount = getDiffCount().incrementAndGet();
 
             if (lDiffCount >= maxDiff) {
                 throw new DiffLimitExceededException("差异数量超过阈值: " + maxDiff + "，停止比对");
@@ -77,6 +77,10 @@ public class VerifyDiffWriter implements AutoCloseable {
 
     public String getFilePath() {
         return filePath;
+    }
+
+    public AtomicLong getDiffCount() {
+        return diffCount;
     }
 
 }

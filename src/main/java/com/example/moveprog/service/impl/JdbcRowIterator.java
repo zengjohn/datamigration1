@@ -1,6 +1,6 @@
 package com.example.moveprog.service.impl;
 
-import com.example.moveprog.service.CloseableRowIterator;
+import com.example.moveprog.service.IJdbcRowIterator;
 import com.example.moveprog.service.TargetDatabaseConnectionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.Assert;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 
 @Slf4j
-public class JdbcRowIterator implements CloseableRowIterator {
+public class JdbcRowIterator implements IJdbcRowIterator<Object> {
 
     private final String sql; // 方便调试
 
@@ -103,10 +103,12 @@ public class JdbcRowIterator implements CloseableRowIterator {
         try { if (conn != null) conn.close(); } catch (Exception e) {}
     }
 
+    @Override
     public String[] getColumnNames() {
         return columnNames;
     }
 
+    @Override
     public int[] getColumnTypes() {
         return columnTypes;
     }
